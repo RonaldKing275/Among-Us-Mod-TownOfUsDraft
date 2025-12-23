@@ -10,7 +10,6 @@ namespace TownOfUsDraft
         public static List<string> MyOptions = new List<string>();
         public static string CategoryTitle = "";
 
-        // Ta metoda sprawdza się co klatkę
         private void Update()
         {
             // Reset przy wyjściu do lobby
@@ -19,49 +18,61 @@ namespace TownOfUsDraft
                 IsActive = false;
             }
 
-            // Blokada ruchu, jeśli menu otwarte
+            // Blokada ruchu
             if (IsActive && PlayerControl.LocalPlayer != null)
             {
                 PlayerControl.LocalPlayer.moveable = false;
             }
         }
 
-        // Rysowanie interfejsu
         private void OnGUI()
         {
+            // Jeśli nieaktywne, nic nie rysuj
             if (!IsActive) return;
 
-            GUI.depth = 0; 
-            
-            float w = 500, h = 450;
-            float x = (Screen.width - w) / 2;
-            float y = (Screen.height - h) / 2;
-
-            GUI.backgroundColor = Color.black;
-            GUI.Box(new Rect(x, y, w, h), "");
-
-            GUIStyle headStyle = new GUIStyle(GUI.skin.label) { fontSize = 32, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
-            headStyle.normal.textColor = Color.yellow;
-            GUI.Label(new Rect(x, y + 20, w, 60), $"KATEGORIA:\n{CategoryTitle}", headStyle);
-
-            GUIStyle btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 24 };
-            btnStyle.normal.textColor = Color.white;
-            btnStyle.hover.textColor = Color.cyan;
-
-            if (MyOptions != null)
+            try
             {
-                for (int i = 0; i < MyOptions.Count; i++)
+                // 1. Ustawienie głębokości na bardzo niską (Rysuj NA WIERZCHU)
+                GUI.depth = -9999;
+
+                float w = 500, h = 450;
+                float x = (Screen.width - w) / 2;
+                float y = (Screen.height - h) / 2;
+
+                // 2. Czarne tło (Prosty Box)
+                GUI.backgroundColor = Color.black;
+                GUI.Box(new Rect(x, y, w, h), "");
+
+                // 3. Nagłówek (Bez GUI.skin - surowy tekst)
+                GUI.color = Color.yellow;
+                GUI.Label(new Rect(x, y + 20, w, 40), $"WYBIERZ ROLĘ: {CategoryTitle}");
+                
+                // Przywracamy kolor dla przycisków
+                GUI.color = Color.white;
+                GUI.backgroundColor = Color.gray;
+
+                if (MyOptions != null)
                 {
-                    string role = MyOptions[i];
-                    string display = role.Replace("Role", "");
-                    
-                    if (GUI.Button(new Rect(x + 50, y + 120 + (i * 90), w - 100, 70), display, btnStyle))
+                    for (int i = 0; i < MyOptions.Count; i++)
                     {
-                        DraftPlugin.Instance.Log.LogInfo($"[UI] Kliknięto: {role}");
-                        DraftManager.OnPlayerSelectedRole(role);
-                        IsActive = false; 
+                        string role = MyOptions[i];
+                        string display = role.Replace("Role", ""); // Wyświetl ładną nazwę
+                        
+                        // 4. Prosty przycisk (Bez stylów)
+                        if (GUI.Button(new Rect(x + 50, y + 80 + (i * 90), w - 100, 70), display))
+                        {
+                            DraftPlugin.Instance.Log.LogInfo($"[UI] Kliknięto: {role}");
+                            DraftManager.OnPlayerSelectedRole(role);
+                            IsActive = false; 
+                        }
                     }
                 }
+            }
+            catch (System.Exception e)
+            {
+                // Jeśli coś wybuchnie w trakcie rysowania, zobaczymy to w logach
+                DraftPlugin.Instance.Log.LogError($"[GUI ERROR] {e.Message}");
+                IsActive = false; // Wyłączamy UI, żeby nie spamowało błędem
             }
         }
     }
