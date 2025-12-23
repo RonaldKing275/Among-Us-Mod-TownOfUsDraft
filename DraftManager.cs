@@ -4,10 +4,10 @@ using UnityEngine;
 using AmongUs.GameOptions;
 using MiraAPI.Roles; 
 using MiraAPI.GameOptions; 
-using MiraAPI.GameOptions.OptionTypes; // Ważne dla ModdedNumberOption
+using MiraAPI.GameOptions.OptionTypes; 
 using BepInEx.Unity.IL2CPP; 
 using System.Reflection;
-using System.Collections; // Potrzebne do obsługi IDictionary
+using System.Collections; 
 
 namespace TownOfUsDraft
 {
@@ -15,38 +15,39 @@ namespace TownOfUsDraft
     {
         public static Dictionary<byte, List<string>> DraftOptions = new Dictionary<byte, List<string>>();
         public static Dictionary<byte, RoleCategory> PlayerCategories = new Dictionary<byte, RoleCategory>();
+        
+        private static bool _debugLogged = false;
 
         public static void StartDraft()
         {
-            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (CONFIG SYNC FIX) ---");
+            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (IMPOSTOR FIX) ---");
+
+            DebugLogAllOptions();
 
             int seed = AmongUsClient.Instance.GameId; 
             System.Random rng = new System.Random(seed);
 
-            // 1. Pobierz i przetasuj graczy
             var players = PlayerControl.AllPlayerControls.ToArray()
                 .OrderBy(p => rng.Next())
                 .ToList();
 
-            DraftPlugin.Instance.Log.LogInfo($"[Draft] Graczy: {players.Count}. Budowanie puli z Configu...");
-
-            // 2. Budowanie Puli Kategorii
+            // 1. Budowanie Puli
             List<RoleCategory> draftPool = new List<RoleCategory>();
 
-            // A. Impostorzy (Vanilla Settings)
+            // A. Impostorzy
             int impostorCount = 1;
             if (GameOptionsManager.Instance != null && GameOptionsManager.Instance.CurrentGameOptions != null)
                 impostorCount = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
             
             for (int i = 0; i < impostorCount; i++) draftPool.Add(RoleCategory.RandomImp);
 
-            // B. Neutrale (TOU Custom Settings przez Reflection)
+            // B. Neutrale (Z configu TOU)
             int nkCount = GetCustomOptionInt("Neutral Killing");
             int neCount = GetCustomOptionInt("Neutral Evil");
             int nbCount = GetCustomOptionInt("Neutral Benign");
             
-            // Możesz dodać logowanie, żeby sprawdzić czy dobrze czyta
-            DraftPlugin.Instance.Log.LogInfo($"[Draft Config] NK: {nkCount}, NE: {neCount}, NB: {nbCount}");
+            // Logujemy dla pewności
+            DraftPlugin.Instance.Log.LogInfo($"[Draft Config] Config: Imp={impostorCount}, NK={nkCount}, NE={neCount}, NB={nbCount}");
 
             for (int i = 0; i < nkCount; i++) draftPool.Add(RoleCategory.NeutralKilling);
             for (int i = 0; i < neCount; i++) draftPool.Add(RoleCategory.NeutralEvil);
@@ -58,7 +59,7 @@ namespace TownOfUsDraft
 
             if (remainingSlots < 0)
             {
-                DraftPlugin.Instance.Log.LogWarning("[Draft] UWAGA: Więcej ról specjalnych niż graczy! Ucinam nadmiar.");
+                // Jeśli przez przypadek ustawiono więcej ról specjalnych niż jest graczy
                 draftPool = draftPool.OrderBy(x => rng.Next()).Take(players.Count).ToList();
             }
             else
@@ -69,29 +70,23 @@ namespace TownOfUsDraft
                 }
             }
 
-            // 3. Tasowanie puli
+            // 2. Tasowanie puli i rozdawanie
             draftPool = draftPool.OrderBy(x => rng.Next()).ToList();
-
             DraftOptions.Clear();
             PlayerCategories.Clear();
 
-            // 4. Rozdawanie
             for (int i = 0; i < players.Count; i++)
             {
                 var player = players[i];
-                RoleCategory assignedCategory = RoleCategory.CrewSupport; 
-
-                if (i < draftPool.Count)
-                {
-                    assignedCategory = draftPool[i];
-                }
+                RoleCategory assignedCategory = (i < draftPool.Count) ? draftPool[i] : RoleCategory.CrewSupport;
 
                 PlayerCategories[player.PlayerId] = assignedCategory;
-
+                
+                // Generowanie opcji (teraz naprawione dla Impostorów)
                 List<string> myOptions = GenerateOptionsForCategory(assignedCategory, rng);
                 DraftOptions[player.PlayerId] = myOptions;
 
-                DraftPlugin.Instance.Log.LogInfo($"[Draft] {player.Data.PlayerName} -> {assignedCategory}");
+                DraftPlugin.Instance.Log.LogInfo($"[Draft] {player.Data.PlayerName} -> {assignedCategory} [{string.Join(", ", myOptions)}]");
 
                 if (player.PlayerId == PlayerControl.LocalPlayer.PlayerId)
                 {
@@ -102,61 +97,76 @@ namespace TownOfUsDraft
             }
         }
 
-        // --- NAPRAWIONA METODA POBIERANIA OPCJI (REFLECTION) ---
-        private static int GetCustomOptionInt(string partialTitle)
-        {
-            try 
-            {
-                // 1. Dobieramy się do ukrytego pola 'ModdedOptions' w ModdedOptionsManager
-                var field = typeof(ModdedOptionsManager).GetField("ModdedOptions", BindingFlags.Static | BindingFlags.NonPublic);
-                if (field == null) return 0;
-
-                // 2. Pobieramy wartość pola (Dictionary<uint, IModdedOption>)
-                var optionsDict = field.GetValue(null) as IDictionary;
-                if (optionsDict == null) return 0;
-
-                // 3. Przeszukujemy słownik
-                foreach (var val in optionsDict.Values)
-                {
-                    // Rzutujemy na ModdedNumberOption (to są suwaki liczbowe)
-                    var numberOption = val as ModdedNumberOption;
-                    
-                    // Sprawdzamy czy tytuł zawiera np. "Neutral Killing"
-                    if (numberOption != null && numberOption.Title != null && numberOption.Title.Contains(partialTitle))
-                    {
-                        return (int)numberOption.Value;
-                    }
-                }
-            }
-            catch (System.Exception e)
-            {
-                DraftPlugin.Instance.Log.LogWarning($"Błąd odczytu opcji '{partialTitle}': {e.Message}");
-            }
-
-            return 0; // Jeśli nie znaleziono lub błąd
-        }
-
-        // --- Reszta metod bez zmian ---
-
+        // --- NAPRAWIONA METODA GENEROWANIA OPCJI ---
         private static List<string> GenerateOptionsForCategory(RoleCategory category, System.Random rng)
         {
             List<string> allRoles = GetAllAvailableRoleNames();
-            List<string> validRoles = new List<string>();
+            
+            // KLUCZOWA ZMIANA:
+            // Używamy RoleCategorizer dla WSZYSTKICH kategorii, w tym RandomImp.
+            // Dzięki temu Morphling, Janitor, Warlock itp. będą widoczni, bo są w Twoim słowniku.
+            List<string> validRoles = RoleCategorizer.GetRolesInCategory(category, allRoles);
 
-            if (category == RoleCategory.RandomImp)
+            // Zabezpieczenie: Jeśli z jakiegoś powodu lista jest pusta (np. brak załadowanych ról z tej kategorii)
+            if (validRoles.Count < 3)
             {
-                validRoles = allRoles.Where(r => r.Contains("Impostor") || r.Contains("Assassin") || r.Contains("Killer")).ToList();
-            }
-            else
-            {
-                validRoles = RoleCategorizer.GetRolesInCategory(category, allRoles);
-                if (validRoles.Count < 3)
+                if (category == RoleCategory.RandomImp)
                 {
-                     validRoles = allRoles.Where(r => !r.Contains("Impostor")).ToList();
+                    // Fallback dla Impostorów - szukamy po nazwie tylko awaryjnie
+                    var emergencyImps = allRoles.Where(r => r.Contains("Impostor") || r.Contains("Assassin") || r.Contains("Killer")).ToList();
+                    validRoles.AddRange(emergencyImps);
+                    // Usuwamy duplikaty
+                    validRoles = validRoles.Distinct().ToList();
+                }
+                else
+                {
+                    // Fallback dla Crew - cokolwiek co nie jest Impostorem
+                    validRoles = allRoles.Where(r => !r.Contains("Impostor") && !r.Contains("Assassin")).ToList();
                 }
             }
 
             return PickRandomRoles(validRoles, 3, rng);
+        }
+
+        // --- Reszta metod (GetCustomOptionInt, DebugLog, itp.) ---
+        
+        private static void DebugLogAllOptions()
+        {
+            if (_debugLogged) return;
+            _debugLogged = true;
+            try 
+            {
+                var field = typeof(ModdedOptionsManager).GetField("ModdedOptions", BindingFlags.Static | BindingFlags.NonPublic);
+                if (field == null) return;
+                var optionsDict = field.GetValue(null) as IDictionary;
+                if (optionsDict == null) return;
+                DraftPlugin.Instance.Log.LogInfo("--- [DEBUG] Skanowanie opcji... ---");
+                // Tu można odkomentować pętlę logującą, jeśli znów będą problemy z configiem
+            }
+            catch {}
+        }
+
+        private static int GetCustomOptionInt(string partialTitle)
+        {
+            try 
+            {
+                var field = typeof(ModdedOptionsManager).GetField("ModdedOptions", BindingFlags.Static | BindingFlags.NonPublic);
+                if (field == null) return 0;
+                var optionsDict = field.GetValue(null) as IDictionary;
+                if (optionsDict == null) return 0;
+
+                foreach (var val in optionsDict.Values)
+                {
+                    var numberOption = val as ModdedNumberOption;
+                    if (numberOption != null && numberOption.Title != null)
+                    {
+                        if (numberOption.Title.ToLower().Contains(partialTitle.ToLower()))
+                            return (int)numberOption.Value;
+                    }
+                }
+            }
+            catch {}
+            return 0;
         }
 
         private static RoleCategory GetWeightedCrewCategory(System.Random rng)
@@ -187,10 +197,7 @@ namespace TownOfUsDraft
         {
             foreach (var roleBase in RoleManager.Instance.AllRoles)
             {
-                if (GetRoleNameUnity(roleBase) == targetName)
-                {
-                    return TryInvokeAssign(roleBase, player);
-                }
+                if (GetRoleNameUnity(roleBase) == targetName) return TryInvokeAssign(roleBase, player);
             }
             return false;
         }
@@ -202,11 +209,10 @@ namespace TownOfUsDraft
             {
                 try
                 {
-                    RoleTypes type = roleBehaviour.Role;
-                    RoleManager.Instance.SetRole(player, type);
+                    RoleManager.Instance.SetRole(player, roleBehaviour.Role);
                     return true;
                 }
-                catch (System.Exception ex) { DraftPlugin.Instance.Log.LogError($"SetRole Error: {ex.Message}"); }
+                catch {}
             }
             return false;
         }
