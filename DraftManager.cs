@@ -15,7 +15,7 @@ namespace TownOfUsDraft
 
         public static void StartDraft()
         {
-            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (MIRA API FIX) ---");
+            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (SAFE MODE) ---");
 
             var players = PlayerControl.AllPlayerControls.ToArray().ToList();
             
@@ -24,7 +24,6 @@ namespace TownOfUsDraft
             if (GameOptionsManager.Instance != null && GameOptionsManager.Instance.CurrentGameOptions != null)
                 impostorCount = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
             
-            // Seedowanie dla synchronizacji Host-Client
             int seed = AmongUsClient.Instance.GameId; 
             System.Random rng = new System.Random(seed);
             
@@ -43,9 +42,9 @@ namespace TownOfUsDraft
             {
                 bool isImpostor = impostorIds.Contains(player.PlayerId);
 
-                // 1. NADAJ ROLĘ VANILLA (Bazową)
-                // Używamy nowej metody SetRole
-                ForceVanillaRole(player, isImpostor);
+                // [USUNIĘTO] Nie wymuszamy roli Vanilla tutaj.
+                // Powodowało to crash, bo niszczyło rolę TOU w trakcie Intro.
+                // ForceVanillaRole(player, isImpostor); 
 
                 List<string> myOptions = new List<string>();
                 RoleCategory assignedCategory = RoleCategory.Unknown;
@@ -72,7 +71,7 @@ namespace TownOfUsDraft
                 DraftOptions[player.PlayerId] = myOptions;
                 PlayerCategories[player.PlayerId] = assignedCategory;
 
-                // UI TYLKO DLA LOKALNEGO GRACZA
+                // UI DLA LOKALNEGO GRACZA
                 if (player.PlayerId == PlayerControl.LocalPlayer.PlayerId)
                 {
                     DraftHud.MyOptions = myOptions;
@@ -91,18 +90,15 @@ namespace TownOfUsDraft
 
         public static void FinalizeRole(PlayerControl player, string roleName)
         {
+            // Teraz, gdy gracz sam klika, jest bezpiecznie zamienić rolę
             if (TryAssignRoleByName(player, roleName))
                 DraftPlugin.Instance.Log.LogInfo($"SUKCES! Rola {roleName} nadana.");
             else
                 DraftPlugin.Instance.Log.LogError($"BŁĄD! Nie udało się nadać roli {roleName}");
         }
 
-        private static void ForceVanillaRole(PlayerControl player, bool isImpostor)
-        {
-            string vanillaName = isImpostor ? "ImpostorRole" : "CrewmateRole";
-            TryAssignRoleByName(player, vanillaName);
-        }
-
+        // --- Helpery ---
+        
         private static bool TryAssignRoleByName(PlayerControl player, string targetName)
         {
             foreach (var roleBase in RoleManager.Instance.AllRoles)
@@ -115,22 +111,16 @@ namespace TownOfUsDraft
             return false;
         }
 
-        // --- KLUCZOWA POPRAWKA ---
         private static bool TryInvokeAssign(object roleObject, PlayerControl player)
         {
-            // Rzutujemy na RoleBehaviour (klasa z MiraAPI)
+            // Używamy bezpiecznej metody SetRole z MiraAPI
             var roleBehaviour = roleObject as RoleBehaviour;
-            
             if (roleBehaviour != null)
             {
                 try
                 {
-                    // Zamiast szukać metody "Assign", pobieramy Typ Roli (Enum)
                     RoleTypes type = roleBehaviour.Role;
-                    
-                    // I wywołujemy główny Manager gry, który ma patcha z MiraAPI
                     RoleManager.Instance.SetRole(player, type);
-                    
                     return true;
                 }
                 catch (System.Exception ex)
@@ -138,14 +128,9 @@ namespace TownOfUsDraft
                     DraftPlugin.Instance.Log.LogError($"SetRole Error: {ex.Message}");
                 }
             }
-            else
-            {
-                DraftPlugin.Instance.Log.LogError($"Obiekt roli nie jest RoleBehaviour! Typ: {roleObject.GetType().Name}");
-            }
             return false;
         }
 
-        // --- Helpery ---
         private static bool IsImpostorRole(string roleName)
         {
             var cat = RoleCategorizer.GetCategory(roleName);
