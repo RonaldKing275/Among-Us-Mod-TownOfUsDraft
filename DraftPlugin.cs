@@ -1,7 +1,6 @@
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using UnityEngine;
 using Il2CppInterop.Runtime.Injection;
 
 namespace TownOfUsDraft
@@ -16,19 +15,13 @@ namespace TownOfUsDraft
         {
             Instance = this;
             
-            // Rejestracja klasy w IL2CPP
+            // Rejestracja klasy HUD (wymagane dla IL2CPP)
             ClassInjector.RegisterTypeInIl2Cpp<DraftHud>();
             
-            // Patchowanie (jeśli jakieś zostało, na razie puste jest ok)
+            // Aplikowanie patchy (w tym nowego HudPatch)
             Harmony.PatchAll();
             
-            // Tworzymy NIEZNISZCZALNY obiekt kontrolny
-            // To gwarantuje, że Update() w DraftHud będzie działać zawsze
-            var go = new GameObject("DraftModeController");
-            GameObject.DontDestroyOnLoad(go);
-            go.AddComponent<DraftHud>();
-            
-            Log.LogInfo("Draft Mode: Controller created and registered.");
+            Log.LogInfo("Draft Mode Loaded & Patched.");
         }
     }
 }
