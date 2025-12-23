@@ -3,17 +3,24 @@ using UnityEngine;
 
 namespace TownOfUsDraft.Patches
 {
-    // Używamy stringa "ShowRole", żeby oszukać kompilator
-    // Harmony znajdzie tę metodę w trakcie gry
-    [HarmonyPatch(typeof(IntroCutscene), "ShowRole")]
-    public static class ForceDraftPatch
+    // Patchujemy moment, gdy gra ustawia ekran "Crewmate"
+    [HarmonyPatch(typeof(IntroCutscene), "BeginCrewmate")]
+    public static class ForceDraftCrewmatePatch
     {
-        // Używamy Prefix, żeby odpalić Draft ZANIM gra pokaże rolę
-        public static void Prefix()
+        public static void Postfix()
         {
-            DraftPlugin.Instance.Log.LogInfo("[FORCE DRAFT] Wykryto ShowRole! Uruchamiam Draft...");
-            
-            // Uruchomienie logiki
+            DraftPlugin.Instance.Log.LogInfo("[FORCE DRAFT] Wykryto BeginCrewmate! Uruchamiam Draft...");
+            DraftManager.StartDraft();
+        }
+    }
+
+    // Patchujemy moment, gdy gra ustawia ekran "Impostor" (dla pewności)
+    [HarmonyPatch(typeof(IntroCutscene), "BeginImpostor")]
+    public static class ForceDraftImpostorPatch
+    {
+        public static void Postfix()
+        {
+            DraftPlugin.Instance.Log.LogInfo("[FORCE DRAFT] Wykryto BeginImpostor! Uruchamiam Draft...");
             DraftManager.StartDraft();
         }
     }
