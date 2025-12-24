@@ -15,9 +15,15 @@ namespace TownOfUsDraft
         public static string CategoryTitle = "";
         public static List<string> MyOptions = new List<string>();
 
-        // Timer dla Hosta
+        // Timer szybkiego przejścia (kiedy gracz wybrał)
         public static bool HostTimerActive = false;
         private float _hostTimer = 0f;
+
+        // --- WATCHDOG (NOWOŚĆ) ---
+        // Timer długiego oczekiwania (gdy gracz ZAMULA lub ZLAGOWAŁ)
+        public static float TurnWatchdogTimer = 0f;
+        public static byte CurrentTurnPlayerId = 255;
+        private const float MAX_TURN_TIME = 15.0f; // 15 sekund na wybór
 
         private bool _wasPaused = false;
 
@@ -25,20 +31,37 @@ namespace TownOfUsDraft
 
         private void Update()
         {
-            // --- LOGIKA HOSTA (NEXT TURN) ---
-            // Zamiast Coroutine, używamy prostego timera w Update. To jest pancerne.
+            // 1. Logika Hosta - Szybkie przejście (0.5s po wyborze)
             if (HostTimerActive && AmongUsClient.Instance.AmHost)
             {
-                _hostTimer += Time.unscaledDeltaTime; // Używamy unscaled, bo gra jest zamrożona!
-                if (_hostTimer >= 0.5f) // Pół sekundy opóźnienia
+                _hostTimer += Time.unscaledDeltaTime;
+                if (_hostTimer >= 0.5f)
                 {
                     HostTimerActive = false;
                     _hostTimer = 0f;
-                    DraftManager.ProcessNextTurn(); // Host odpala następną turę
+                    DraftManager.ProcessNextTurn();
                 }
             }
-            // --------------------------------
 
+            // 2. Logika Hosta - WATCHDOG (Zabezpieczenie przed zwiechą)
+            if (IsDraftActive && AmongUsClient.Instance.AmHost && !HostTimerActive)
+            {
+                // Jeśli ktoś ma turę (nie jest to 255)
+                if (CurrentTurnPlayerId != 255)
+                {
+                    TurnWatchdogTimer += Time.unscaledDeltaTime;
+                    
+                    // Jeśli minęło 15 sekund i nic się nie stało -> SKIP
+                    if (TurnWatchdogTimer >= MAX_TURN_TIME)
+                    {
+                        DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Czas minął dla gracza {CurrentTurnPlayerId}. Wymuszam next.");
+                        TurnWatchdogTimer = 0f;
+                        DraftManager.ForceSkipTurn();
+                    }
+                }
+            }
+
+            // --- Resetowanie gry po zakończeniu ---
             var state = AmongUsClient.Instance.GameState;
             if (state == InnerNetClient.GameStates.NotJoined || state == InnerNetClient.GameStates.Ended)
             {
@@ -48,6 +71,7 @@ namespace TownOfUsDraft
                 return;
             }
 
+            // Pauza
             if (IsDraftActive)
             {
                 if (Time.timeScale != 0f) { Time.timeScale = 0f; _wasPaused = true; }
@@ -91,9 +115,14 @@ namespace TownOfUsDraft
             GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
             titleStyle.normal.textColor = Color.white;
 
+            // Timer wizualny dla graczy
+            string timeLeft = "";
+            if (AmongUsClient.Instance.AmHost) 
+                timeLeft = $" ({Mathf.Ceil(MAX_TURN_TIME - TurnWatchdogTimer)}s)";
+
             if (isMyTurn)
             {
-                GUI.Label(new Rect(0, 50, Screen.width, 50), $"TWOJA TURA: {CategoryTitle}", titleStyle);
+                GUI.Label(new Rect(0, 50, Screen.width, 50), $"TWOJA TURA: {CategoryTitle}{timeLeft}", titleStyle);
                 
                 float w = 600;
                 float x = (Screen.width - w) / 2;
