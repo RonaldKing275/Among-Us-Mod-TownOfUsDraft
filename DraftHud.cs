@@ -1,124 +1,128 @@
+using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using UnityEngine;
 using System.Collections.Generic;
+using InnerNet; 
 
 namespace TownOfUsDraft
 {
     public class DraftHud : MonoBehaviour
     {
-        public static bool IsActive = false;
-        public static List<string> MyOptions = new List<string>();
+        public static DraftHud Instance;
+        public static bool IsDraftActive = false;
+        
+        public static byte ActiveTurnPlayerId = 255; 
         public static string CategoryTitle = "";
+        public static List<string> MyOptions = new List<string>();
 
-        private bool _hasLogged = false;
-        private bool _wasPaused = false; // Flaga, czy my zatrzymaliśmy czas
+        // Timer dla Hosta
+        public static bool HostTimerActive = false;
+        private float _hostTimer = 0f;
+
+        private bool _wasPaused = false;
+
+        private void Awake() { Instance = this; }
 
         private void Update()
         {
-            // Jeśli nie jesteśmy w grze/lobby, resetuj wszystko
-            if (AmongUsClient.Instance.GameState == InnerNet.InnerNetClient.GameStates.NotJoined)
+            // --- LOGIKA HOSTA (NEXT TURN) ---
+            // Zamiast Coroutine, używamy prostego timera w Update. To jest pancerne.
+            if (HostTimerActive && AmongUsClient.Instance.AmHost)
             {
-                if (IsActive) CloseDraft();
-                _hasLogged = false;
+                _hostTimer += Time.unscaledDeltaTime; // Używamy unscaled, bo gra jest zamrożona!
+                if (_hostTimer >= 0.5f) // Pół sekundy opóźnienia
+                {
+                    HostTimerActive = false;
+                    _hostTimer = 0f;
+                    DraftManager.ProcessNextTurn(); // Host odpala następną turę
+                }
+            }
+            // --------------------------------
+
+            var state = AmongUsClient.Instance.GameState;
+            if (state == InnerNetClient.GameStates.NotJoined || state == InnerNetClient.GameStates.Ended)
+            {
+                if (IsDraftActive || _wasPaused) ForceUnfreeze();
+                IsDraftActive = false;
+                HostTimerActive = false;
+                return;
             }
 
-            // --- LOGIKA ZATRZYMYWANIA CZASU ---
-            if (IsActive)
+            if (IsDraftActive)
             {
-                // Zamrażamy czas, żeby Intro się nie skończyło
-                if (Time.timeScale != 0f)
-                {
-                    Time.timeScale = 0f;
-                    _wasPaused = true;
-                }
-
-                // Blokada ruchu (na wszelki wypadek)
-                if (PlayerControl.LocalPlayer != null)
-                    PlayerControl.LocalPlayer.moveable = false;
+                if (Time.timeScale != 0f) { Time.timeScale = 0f; _wasPaused = true; }
+                if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = false;
             }
             else if (_wasPaused)
             {
-                // Jeśli Draft się skończył, a my pauzowaliśmy -> ODMRÓŹ
-                Time.timeScale = 1f;
-                _wasPaused = false;
-                
-                if (PlayerControl.LocalPlayer != null)
-                    PlayerControl.LocalPlayer.moveable = true;
+                ForceUnfreeze();
             }
         }
 
-        private void CloseDraft()
-        {
-            IsActive = false;
-            Time.timeScale = 1f; // Zawsze przywracaj czas przy zamknięciu
-            _wasPaused = false;
-        }
-
-        // Zabezpieczenie: Przy niszczeniu obiektu (wyjście z gry) odmrażamy czas
-        private void OnDestroy()
+        private void ForceUnfreeze()
         {
             Time.timeScale = 1f;
+            _wasPaused = false;
+            if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = true;
         }
 
         private void OnGUI()
         {
-            if (!IsActive) return;
+            if (!IsDraftActive) return;
 
-            if (!_hasLogged)
+            GUI.depth = -9999;
+            GUI.backgroundColor = new Color(0.05f, 0.05f, 0.1f, 0.98f); 
+            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
+
+            if (ActiveTurnPlayerId == 255)
             {
-                DraftPlugin.Instance.Log.LogInfo("[DraftHud] GUI Otwarte - Czas Zatrzymany!");
-                _hasLogged = true;
+                GUIStyle processingStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 32, fontStyle = FontStyle.Bold };
+                processingStyle.normal.textColor = Color.gray;
+                GUI.Label(new Rect(0, Screen.height/2 - 50, Screen.width, 100), "PRZETWARZANIE...", processingStyle);
+                return;
             }
 
-            try
+            bool isMyTurn = (PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == ActiveTurnPlayerId);
+            
+            string activeName = "Unknown";
+            foreach(var p in PlayerControl.AllPlayerControls) 
+                if(p.PlayerId == ActiveTurnPlayerId) activeName = p.Data.PlayerName;
+
+            GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
+            titleStyle.normal.textColor = Color.white;
+
+            if (isMyTurn)
             {
-                GUI.depth = -9999; // Zawsze na wierzchu
-
-                float w = 600, h = 500;
+                GUI.Label(new Rect(0, 50, Screen.width, 50), $"TWOJA TURA: {CategoryTitle}", titleStyle);
+                
+                float w = 600;
                 float x = (Screen.width - w) / 2;
-                float y = (Screen.height - h) / 2;
-
-                // Tło
-                GUI.backgroundColor = Color.black;
-                GUI.Box(new Rect(x, y, w, h), ""); 
-
-                // Nagłówek
-                GUI.color = Color.yellow;
-                
-                // POPRAWKA: GUIStyle z dużej litery
-                GUIStyle centeredStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 20, fontStyle = FontStyle.Bold };
-                centeredStyle.normal.textColor = Color.yellow;
-                
-                GUI.Label(new Rect(x, y + 20, w, 50), $"WYBIERZ ROLĘ: {CategoryTitle}", centeredStyle);
-                
-                GUI.color = Color.white;
+                GUIStyle btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 24 };
 
                 if (MyOptions != null)
                 {
-                    for (int i = 0; i < MyOptions.Count; i++)
+                    for(int i=0; i<MyOptions.Count; i++)
                     {
-                        string role = MyOptions[i];
-                        string display = role.Replace("Role", ""); // Wyświetl ładniejszą nazwę
-
-                        // Przycisk wyboru
-                        if (GUI.Button(new Rect(x + 50, y + 80 + (i * 100), w - 100, 80), display))
+                        string display = MyOptions[i].Replace("Role", "");
+                        if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, btnStyle))
                         {
-                            DraftPlugin.Instance.Log.LogInfo($"[UI] Kliknięto: {role}");
-                            
-                            // 1. Nadaj rolę
-                            DraftManager.OnPlayerSelectedRole(role);
-                            
-                            // 2. Zamknij Draft (to automatycznie wznowi czas w Update)
-                            CloseDraft();
+                            DraftManager.OnPlayerSelectedRole(MyOptions[i]);
                         }
+                    }
+                    GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
+                    if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", btnStyle))
+                    {
+                        DraftManager.OnRandomRoleSelected();
                     }
                 }
             }
-            catch (System.Exception e)
+            else
             {
-                DraftPlugin.Instance.Log.LogError($"[GUI ERROR] {e.Message}");
-                // W razie błędu awaryjnie zamknij, żeby nie zaciąć gry
-                CloseDraft(); 
+                GUIStyle waitStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 48, fontStyle = FontStyle.Bold };
+                waitStyle.normal.textColor = Color.yellow;
+                
+                string dots = ""; int t = (int)(Time.unscaledTime * 2) % 4; for(int i=0; i<t; i++) dots += ".";
+                GUI.Label(new Rect(0, Screen.height/2 - 100, Screen.width, 200), $"WYBIERA GRACZ: {activeName}{dots}", waitStyle);
             }
         }
     }

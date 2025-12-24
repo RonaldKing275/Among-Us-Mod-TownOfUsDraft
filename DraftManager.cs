@@ -8,249 +8,216 @@ using MiraAPI.GameOptions.OptionTypes;
 using BepInEx.Unity.IL2CPP; 
 using System.Reflection;
 using System.Collections; 
+using Hazel; 
 
 namespace TownOfUsDraft
 {
     public static class DraftManager
     {
-        public static Dictionary<byte, List<string>> DraftOptions = new Dictionary<byte, List<string>>();
-        public static Dictionary<byte, RoleCategory> PlayerCategories = new Dictionary<byte, RoleCategory>();
-        
-        private static bool _debugLogged = false;
+        public static Queue<byte> TurnQueue = new Queue<byte>();
+        public static Dictionary<byte, RoleCategory> HostDraftAssignments = new Dictionary<byte, RoleCategory>();
+        private static HashSet<string> _globalUsedRoles = new HashSet<string>();
 
         public static void StartDraft()
         {
-            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (IMPOSTOR FIX) ---");
-
-            DebugLogAllOptions();
+            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (TIMER FIX) ---");
+            _globalUsedRoles.Clear();
+            
+            if (!AmongUsClient.Instance.AmHost) return;
 
             int seed = AmongUsClient.Instance.GameId; 
             System.Random rng = new System.Random(seed);
-
-            var players = PlayerControl.AllPlayerControls.ToArray()
-                .OrderBy(p => rng.Next())
-                .ToList();
-
-            // 1. Budowanie Puli
-            List<RoleCategory> draftPool = new List<RoleCategory>();
-
-            // A. Impostorzy
-            int impostorCount = 1;
-            if (GameOptionsManager.Instance != null && GameOptionsManager.Instance.CurrentGameOptions != null)
-                impostorCount = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
             
-            for (int i = 0; i < impostorCount; i++) draftPool.Add(RoleCategory.RandomImp);
+            var players = PlayerControl.AllPlayerControls.ToArray().OrderBy(p => rng.Next()).ToList();
+            List<RoleCategory> draftPool = BuildDraftPool(players.Count);
 
-            // B. Neutrale (Z configu TOU)
-            int nkCount = GetCustomOptionInt("Neutral Killing");
-            int neCount = GetCustomOptionInt("Neutral Evil");
-            int nbCount = GetCustomOptionInt("Neutral Benign");
-            
-            // Logujemy dla pewności
-            DraftPlugin.Instance.Log.LogInfo($"[Draft Config] Config: Imp={impostorCount}, NK={nkCount}, NE={neCount}, NB={nbCount}");
-
-            for (int i = 0; i < nkCount; i++) draftPool.Add(RoleCategory.NeutralKilling);
-            for (int i = 0; i < neCount; i++) draftPool.Add(RoleCategory.NeutralEvil);
-            for (int i = 0; i < nbCount; i++) draftPool.Add(RoleCategory.NeutralBenign);
-
-            // C. Crewmates (Reszta slotów)
-            int filledSlots = draftPool.Count;
-            int remainingSlots = players.Count - filledSlots;
-
-            if (remainingSlots < 0)
-            {
-                // Jeśli przez przypadek ustawiono więcej ról specjalnych niż jest graczy
-                draftPool = draftPool.OrderBy(x => rng.Next()).Take(players.Count).ToList();
-            }
-            else
-            {
-                for (int i = 0; i < remainingSlots; i++)
-                {
-                    draftPool.Add(GetWeightedCrewCategory(rng));
-                }
-            }
-
-            // 2. Tasowanie puli i rozdawanie
-            draftPool = draftPool.OrderBy(x => rng.Next()).ToList();
-            DraftOptions.Clear();
-            PlayerCategories.Clear();
+            TurnQueue.Clear();
+            HostDraftAssignments.Clear();
 
             for (int i = 0; i < players.Count; i++)
             {
-                var player = players[i];
-                RoleCategory assignedCategory = (i < draftPool.Count) ? draftPool[i] : RoleCategory.CrewSupport;
-
-                PlayerCategories[player.PlayerId] = assignedCategory;
-                
-                // Generowanie opcji (teraz naprawione dla Impostorów)
-                List<string> myOptions = GenerateOptionsForCategory(assignedCategory, rng);
-                DraftOptions[player.PlayerId] = myOptions;
-
-                DraftPlugin.Instance.Log.LogInfo($"[Draft] {player.Data.PlayerName} -> {assignedCategory} [{string.Join(", ", myOptions)}]");
-
-                if (player.PlayerId == PlayerControl.LocalPlayer.PlayerId)
-                {
-                    DraftHud.MyOptions = myOptions;
-                    DraftHud.CategoryTitle = FormatCategoryName(assignedCategory);
-                    DraftHud.IsActive = true;
-                }
+                var p = players[i];
+                RoleCategory cat = (i < draftPool.Count) ? draftPool[i] : RoleCategory.CrewSupport;
+                HostDraftAssignments[p.PlayerId] = cat;
+                TurnQueue.Enqueue(p.PlayerId);
             }
+
+            ProcessNextTurn(rng);
         }
 
-        // --- NAPRAWIONA METODA GENEROWANIA OPCJI ---
-        private static List<string> GenerateOptionsForCategory(RoleCategory category, System.Random rng)
+        // ZMIANA: Publiczne, żeby DraftHud mógł wywołać
+        public static void ProcessNextTurn(System.Random rng = null)
         {
-            List<string> allRoles = GetAllAvailableRoleNames();
+            if (rng == null) rng = new System.Random();
+
+            if (TurnQueue.Count == 0)
+            {
+                DraftPlugin.Instance.Log.LogInfo("[Host] Draft zakończony!");
+                OnTurnStarted(255, "", new List<string>()); 
+                SendStartTurnRpc(255, "", new List<string>{"","",""});
+                return;
+            }
+
+            byte nextPlayerId = TurnQueue.Dequeue();
             
-            // KLUCZOWA ZMIANA:
-            // Używamy RoleCategorizer dla WSZYSTKICH kategorii, w tym RandomImp.
-            // Dzięki temu Morphling, Janitor, Warlock itp. będą widoczni, bo są w Twoim słowniku.
-            List<string> validRoles = RoleCategorizer.GetRolesInCategory(category, allRoles);
-
-            // Zabezpieczenie: Jeśli z jakiegoś powodu lista jest pusta (np. brak załadowanych ról z tej kategorii)
-            if (validRoles.Count < 3)
+            if (GetPlayerById(nextPlayerId) == null)
             {
-                if (category == RoleCategory.RandomImp)
-                {
-                    // Fallback dla Impostorów - szukamy po nazwie tylko awaryjnie
-                    var emergencyImps = allRoles.Where(r => r.Contains("Impostor") || r.Contains("Assassin") || r.Contains("Killer")).ToList();
-                    validRoles.AddRange(emergencyImps);
-                    // Usuwamy duplikaty
-                    validRoles = validRoles.Distinct().ToList();
-                }
-                else
-                {
-                    // Fallback dla Crew - cokolwiek co nie jest Impostorem
-                    validRoles = allRoles.Where(r => !r.Contains("Impostor") && !r.Contains("Assassin")).ToList();
-                }
+                ProcessNextTurn(rng); 
+                return;
             }
 
-            return PickRandomRoles(validRoles, 3, rng);
+            RoleCategory cat = HostDraftAssignments[nextPlayerId];
+            List<string> options = GenerateUniqueOptions(cat, rng);
+            foreach(var op in options) _globalUsedRoles.Add(op);
+
+            OnTurnStarted(nextPlayerId, FormatCategoryName(cat), options);
+            SendStartTurnRpc(nextPlayerId, FormatCategoryName(cat), options);
         }
 
-        // --- Reszta metod (GetCustomOptionInt, DebugLog, itp.) ---
-        
-        private static void DebugLogAllOptions()
+        public static void OnTurnStarted(byte activePlayerId, string catTitle, List<string> options)
         {
-            if (_debugLogged) return;
-            _debugLogged = true;
-            try 
+            if (activePlayerId == 255)
             {
-                var field = typeof(ModdedOptionsManager).GetField("ModdedOptions", BindingFlags.Static | BindingFlags.NonPublic);
-                if (field == null) return;
-                var optionsDict = field.GetValue(null) as IDictionary;
-                if (optionsDict == null) return;
-                DraftPlugin.Instance.Log.LogInfo("--- [DEBUG] Skanowanie opcji... ---");
-                // Tu można odkomentować pętlę logującą, jeśli znów będą problemy z configiem
+                DraftHud.IsDraftActive = false;
+                return;
             }
-            catch {}
-        }
 
-        private static int GetCustomOptionInt(string partialTitle)
-        {
-            try 
-            {
-                var field = typeof(ModdedOptionsManager).GetField("ModdedOptions", BindingFlags.Static | BindingFlags.NonPublic);
-                if (field == null) return 0;
-                var optionsDict = field.GetValue(null) as IDictionary;
-                if (optionsDict == null) return 0;
-
-                foreach (var val in optionsDict.Values)
-                {
-                    var numberOption = val as ModdedNumberOption;
-                    if (numberOption != null && numberOption.Title != null)
-                    {
-                        if (numberOption.Title.ToLower().Contains(partialTitle.ToLower()))
-                            return (int)numberOption.Value;
-                    }
-                }
-            }
-            catch {}
-            return 0;
-        }
-
-        private static RoleCategory GetWeightedCrewCategory(System.Random rng)
-        {
-            int roll = rng.Next(0, 100);
-            if (roll < 20) return RoleCategory.CrewInvestigative;
-            if (roll < 40) return RoleCategory.CrewKilling;
-            if (roll < 60) return RoleCategory.CrewProtective;
-            if (roll < 80) return RoleCategory.CrewSupport;
-            return RoleCategory.CrewPower;
+            DraftHud.ActiveTurnPlayerId = activePlayerId;
+            DraftHud.CategoryTitle = catTitle;
+            DraftHud.MyOptions = options;
+            DraftHud.IsDraftActive = true;
         }
 
         public static void OnPlayerSelectedRole(string roleName)
         {
             var player = PlayerControl.LocalPlayer;
-            if (player != null) FinalizeRole(player, roleName);
-        }
-
-        public static void FinalizeRole(PlayerControl player, string roleName)
-        {
-            if (TryAssignRoleByName(player, roleName))
-                DraftPlugin.Instance.Log.LogInfo($"SUKCES! Rola {roleName} nadana.");
-            else
-                DraftPlugin.Instance.Log.LogError($"BŁĄD! Nie udało się nadać roli {roleName}");
-        }
-
-        private static bool TryAssignRoleByName(PlayerControl player, string targetName)
-        {
-            foreach (var roleBase in RoleManager.Instance.AllRoles)
+            if (player != null)
             {
-                if (GetRoleNameUnity(roleBase) == targetName) return TryInvokeAssign(roleBase, player);
-            }
-            return false;
-        }
+                RoleTypes type = RoleTypes.Crewmate;
+                foreach (var r in RoleManager.Instance.AllRoles) 
+                    if (GetRoleNameUnity(r) == roleName) { type = ((RoleBehaviour)r).Role; break; }
 
-        private static bool TryInvokeAssign(object roleObject, PlayerControl player)
-        {
-            var roleBehaviour = roleObject as RoleBehaviour;
-            if (roleBehaviour != null)
-            {
-                try
-                {
-                    RoleManager.Instance.SetRole(player, roleBehaviour.Role);
-                    return true;
-                }
-                catch {}
+                SendRoleSelectedRpc(player.PlayerId, roleName);
+                DraftHud.ActiveTurnPlayerId = 255; // Zablokuj UI
+                ApplyRoleFromRpc(player, type);
             }
-            return false;
-        }
-
-        private static string GetRoleNameUnity(object roleObject)
-        {
-            if (roleObject == null) return "null";
-            var unityObject = roleObject as UnityEngine.Object;
-            return unityObject != null ? unityObject.name : "Unknown";
-        }
-
-        private static List<string> GetAllAvailableRoleNames()
-        {
-            List<string> list = new List<string>();
-            foreach (var r in RoleManager.Instance.AllRoles)
-            {
-                string name = GetRoleNameUnity(r);
-                if (name != "Unknown" && !name.Contains("Vanilla") && !name.Contains("Ghost") && !name.Contains("Glitch")) 
-                    list.Add(name);
-            }
-            return list;
-        }
-
-        private static List<string> PickRandomRoles(List<string> source, int count, System.Random rng)
-        {
-            List<string> res = new List<string>();
-            List<string> pool = new List<string>(source).OrderBy(x => rng.Next()).ToList();
-            for (int i = 0; i < count; i++) {
-                if (pool.Count == 0) break;
-                res.Add(pool[0]);
-                pool.RemoveAt(0);
-            }
-            return res;
         }
         
-        private static string FormatCategoryName(RoleCategory cat)
+        public static void OnRandomRoleSelected()
         {
-            return cat.ToString().Replace("Random", "").Replace("Crew", "Crewmate ");
+            if (DraftHud.MyOptions.Count > 0)
+            {
+                string randomPick = DraftHud.MyOptions[new System.Random().Next(DraftHud.MyOptions.Count)];
+                OnPlayerSelectedRole(randomPick);
+            }
+        }
+
+        public static void ApplyRoleFromRpc(PlayerControl player, RoleTypes type)
+        {
+            try 
+            {
+                RoleManager.Instance.SetRole(player, type);
+                DraftPlugin.Instance.Log.LogInfo($"[Draft Sync] Gracz {player.Data.PlayerName} wybrał {type}");
+
+                // JEŚLI HOST: Włącz timer w HUDzie
+                if (AmongUsClient.Instance.AmHost)
+                {
+                    DraftHud.HostTimerActive = true; // To bezpiecznie odpali ProcessNextTurn w Update()
+                }
+            } 
+            catch {}
+        }
+
+        // --- Reszta metod bez zmian (Generowanie, BuildPool, RPC...) ---
+        
+        private static List<string> GenerateUniqueOptions(RoleCategory category, System.Random rng)
+        {
+            List<string> allRoles = GetAllAvailableRoleNames();
+            List<string> categoryRoles = RoleCategorizer.GetRolesInCategory(category, allRoles);
+            var available = categoryRoles.Where(r => !_globalUsedRoles.Contains(r)).ToList();
+            if (available.Count < 3) available = categoryRoles; 
+            if (available.Count == 0) available = allRoles.Where(r => !r.Contains("Impostor")).ToList();
+            available = available.OrderBy(x => rng.Next()).ToList();
+            return available.Take(3).ToList();
+        }
+
+        private static List<RoleCategory> BuildDraftPool(int playerCount)
+        {
+            List<RoleCategory> pool = new List<RoleCategory>();
+            int imp = (GameOptionsManager.Instance?.CurrentGameOptions?.NumImpostors) ?? 1;
+            for(int i=0; i<imp; i++) pool.Add(RoleCategory.RandomImp);
+
+            int nk = GetSmartOption("neutral killer") + GetSmartOption("neutral killing") + GetSmartOption("neutral outliers");
+            int ne = GetSmartOption("neutral evil");
+            int nb = GetSmartOption("neutral benign");
+            for(int i=0; i<nk; i++) pool.Add(RoleCategory.NeutralKilling);
+            for(int i=0; i<ne; i++) pool.Add(RoleCategory.NeutralEvil);
+            for(int i=0; i<nb; i++) pool.Add(RoleCategory.NeutralBenign);
+
+            int cInv = GetSmartOption("investigative");
+            int cPro = GetSmartOption("protective");
+            int cSup = GetSmartOption("support");
+            int cPow = GetSmartOption("power");
+            int cKil = GetSmartOption("killing", "neutral");
+
+            for(int i=0; i<cInv; i++) pool.Add(RoleCategory.CrewInvestigative);
+            for(int i=0; i<cPro; i++) pool.Add(RoleCategory.CrewProtective);
+            for(int i=0; i<cKil; i++) pool.Add(RoleCategory.CrewKilling);
+            for(int i=0; i<cSup; i++) pool.Add(RoleCategory.CrewSupport);
+            for(int i=0; i<cPow; i++) pool.Add(RoleCategory.CrewPower);
+
+            int remaining = playerCount - pool.Count;
+            if (remaining < 0) pool = pool.OrderBy(x => new System.Random().Next()).Take(playerCount).ToList();
+            else for(int i=0; i<remaining; i++) pool.Add(GetWeightedCrewCategory(new System.Random()));
+
+            return pool.OrderBy(x => new System.Random().Next()).ToList();
+        }
+
+        private static void SendStartTurnRpc(byte playerId, string cat, List<string> opts)
+        {
+            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, (byte)251, SendOption.Reliable, -1);
+            writer.Write(playerId); writer.Write(cat); writer.Write(opts[0]); writer.Write(opts[1]); writer.Write(opts[2]);
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+        }
+
+        private static void SendRoleSelectedRpc(byte playerId, string roleName)
+        {
+            int roleId = 0;
+            foreach (var r in RoleManager.Instance.AllRoles) 
+                if (GetRoleNameUnity(r) == roleName) { roleId = (int)((RoleBehaviour)r).Role; break; }
+            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, (byte)249, SendOption.Reliable, -1);
+            writer.Write(playerId); writer.Write(roleId);
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+        }
+
+        private static PlayerControl GetPlayerById(byte id) { foreach (var p in PlayerControl.AllPlayerControls) if (p.PlayerId == id) return p; return null; }
+        private static int GetSmartOption(string k, string ex = null) {
+            try {
+                var field = typeof(ModdedOptionsManager).GetField("ModdedOptions", BindingFlags.Static | BindingFlags.NonPublic);
+                if (field==null) return 0;
+                var dict = field.GetValue(null) as IDictionary;
+                foreach(var v in dict.Values) {
+                    var n = v as ModdedNumberOption;
+                    if(n!=null && n.Title.ToLower().Contains(k.ToLower()) && (ex==null || !n.Title.ToLower().Contains(ex.ToLower()))) return (int)n.Value;
+                }
+            } catch {} return 0;
+        }
+        private static List<string> GetAllAvailableRoleNames() {
+            List<string> l = new List<string>();
+            foreach(var r in RoleManager.Instance.AllRoles) {
+                string n = GetRoleNameUnity(r);
+                if(n!="Unknown" && !n.Contains("Vanilla") && !n.Contains("Ghost") && !n.Contains("Glitch")) l.Add(n);
+            } return l;
+        }
+        private static string GetRoleNameUnity(object o) => (o as UnityEngine.Object)?.name ?? "null";
+        private static string FormatCategoryName(RoleCategory c) => c.ToString().Replace("Random","").Replace("Crew","Crewmate ");
+        private static RoleCategory GetWeightedCrewCategory(System.Random r) {
+            int roll = r.Next(0, 100);
+            if (roll < 20) return RoleCategory.CrewInvestigative;
+            if (roll < 40) return RoleCategory.CrewKilling;
+            if (roll < 60) return RoleCategory.CrewProtective;
+            if (roll < 80) return RoleCategory.CrewSupport;
+            return RoleCategory.CrewPower;
         }
     }
 }

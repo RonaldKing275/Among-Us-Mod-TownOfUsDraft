@@ -4,7 +4,6 @@ namespace TownOfUsDraft
 {
     public enum RoleCategory
     {
-        // Twoje kategorie
         RandomImp,
         CrewInvestigative,
         CrewKilling,
@@ -14,16 +13,14 @@ namespace TownOfUsDraft
         NeutralBenign,
         CrewSupport,
         CrewPower,
-        
         Unknown
     }
 
     public static class RoleCategorizer
     {
-        // Mapowanie: Nazwa Unity -> Twoja Kategoria
         private static Dictionary<string, RoleCategory> RoleMap = new Dictionary<string, RoleCategory>()
         {
-            // --- IMPOSTORS (Random Imp) ---
+            // --- IMPOSTORS ---
             { "ImpostorRole", RoleCategory.RandomImp },
             { "AssassinRole", RoleCategory.RandomImp },
             { "NinjaRole", RoleCategory.RandomImp },
@@ -39,8 +36,8 @@ namespace TownOfUsDraft
             { "ConsigliereRole", RoleCategory.RandomImp },
             { "BlackmailerRole", RoleCategory.RandomImp },
             { "WarlockRole", RoleCategory.RandomImp },
-            { "TraitorRole", RoleCategory.RandomImp },
-            { "VampireRole", RoleCategory.RandomImp }, // Czasami Neutral, zależy od ustawień, wrzucam do Imp
+            { "VampireRole", RoleCategory.RandomImp }, 
+            // { "TraitorRole", RoleCategory.RandomImp }, // USUNIĘTO - Rola wtórna
 
             // --- CREW INVESTIGATIVE ---
             { "SeerRole", RoleCategory.CrewInvestigative },
@@ -63,7 +60,7 @@ namespace TownOfUsDraft
             // --- CREW PROTECTIVE ---
             { "MedicRole", RoleCategory.CrewProtective },
             { "WardenRole", RoleCategory.CrewProtective },
-            { "GuardianAngelRole", RoleCategory.CrewProtective }, // Czasami Neutral Benign, ale często Protective
+            { "GuardianAngelRole", RoleCategory.CrewProtective },
 
             // --- CREW SUPPORT ---
             { "EngineerRole", RoleCategory.CrewSupport },
