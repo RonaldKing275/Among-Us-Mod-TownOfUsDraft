@@ -11,6 +11,7 @@ namespace TownOfUsDraft
         
         private GUIStyle _boxStyle;
         private GUIStyle _buttonStyle;
+        private GUIStyle _randomButtonStyle; // Styl dla przycisku Random
         private bool _stylesInit = false;
 
         private void Awake()
@@ -29,9 +30,16 @@ namespace TownOfUsDraft
             if (_stylesInit) return;
             _boxStyle = new GUIStyle(GUI.skin.box);
             _boxStyle.normal.background = Texture2D.whiteTexture;
+
             _buttonStyle = new GUIStyle(GUI.skin.button);
             _buttonStyle.fontSize = 20;
-            _buttonStyle.normal.textColor = Color.yellow;
+            _buttonStyle.normal.textColor = Color.white;
+            
+            _randomButtonStyle = new GUIStyle(GUI.skin.button);
+            _randomButtonStyle.fontSize = 20;
+            _randomButtonStyle.normal.textColor = Color.cyan; // Wyróżniony kolor
+            _randomButtonStyle.fontStyle = FontStyle.Bold;
+
             _stylesInit = true;
         }
 
@@ -43,7 +51,7 @@ namespace TownOfUsDraft
             InitStyles();
 
             float width = 600; 
-            float height = 400;
+            float height = 500; // Trochę wyższe bo 4 przyciski
             float x = (Screen.width - width) / 2;
             float y = (Screen.height - height) / 2;
 
@@ -52,25 +60,35 @@ namespace TownOfUsDraft
             GUI.color = Color.white;
 
             GUILayout.BeginArea(new Rect(x, y, width, height));
-            GUILayout.Label("DRAFT MODE", _buttonStyle); 
+            GUILayout.Label("WYBIERZ SWOJĄ ROLĘ", _buttonStyle); 
             
             if (_currentOptions.Count > 0)
             {
-                GUILayout.Label("Wybierz swoją rolę:", _buttonStyle);
                 foreach (var role in _currentOptions)
                 {
-                    if (GUILayout.Button(role, GUILayout.Height(50)))
+                    // Specjalna obsługa przycisku Random
+                    if (role == "Random")
                     {
-                        // Wywołanie metody z menedżera
-                        DraftManager.Instance.OnPlayerSelectedRole(role); 
-                        _currentOptions.Clear(); 
-                        ShowHud = false; // Schowaj po wyborze
+                        GUILayout.Space(10);
+                        if (GUILayout.Button("??? LOSOWA ROLA Z KATEGORII ???", _randomButtonStyle, GUILayout.Height(60)))
+                        {
+                            DraftManager.Instance.OnPlayerSelectedRole("Random"); 
+                            ShowHud = false;
+                        }
+                    }
+                    else
+                    {
+                        if (GUILayout.Button(role, _buttonStyle, GUILayout.Height(50)))
+                        {
+                            DraftManager.Instance.OnPlayerSelectedRole(role); 
+                            ShowHud = false; 
+                        }
                     }
                 }
             }
             else
             {
-                GUILayout.Label("Oczekiwanie na innych...", _buttonStyle);
+                GUILayout.Label("Oczekiwanie na turę...", _buttonStyle);
             }
             
             GUILayout.EndArea();
