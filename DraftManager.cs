@@ -7,6 +7,7 @@ using MiraAPI.GameOptions;
 using TownOfUs.Options;    
 using Hazel;               
 using TownOfUs.Roles;
+using System.Reflection; // Niezbędne do Refleksji
 
 namespace TownOfUsDraft
 {
@@ -20,6 +21,10 @@ namespace TownOfUsDraft
         public bool IsDraftActive = false;
         public List<string> CurrentPool = new List<string>();
 
+        // Cache dla metody przypisującej rolę
+        private MethodInfo _assignRoleMethod;
+        private bool _assignMethodSearched = false;
+
         private void Awake()
         {
             if (Instance != null && Instance != this) Destroy(this);
@@ -32,6 +37,9 @@ namespace TownOfUsDraft
 
             Debug.Log("[Draft] --- START DRAFTU ---");
             
+            // Szukamy metody przypisywania ról (tylko raz)
+            FindAssignmentMethod();
+
             HostDraftAssignments.Clear();
             TurnQueue.Clear();
             PendingRoles.Clear();
@@ -72,6 +80,51 @@ namespace TownOfUsDraft
 
             SendStartDraftRpc(players.Select(p => p.PlayerId).ToList());
             ProcessNextTurn();
+        }
+
+        private void FindAssignmentMethod()
+        {
+            if (_assignMethodSearched) return;
+            _assignMethodSearched = true;
+
+            Debug.Log("[Draft] Szukanie metody przypisywania ról w MiraAPI/TOU...");
+
+            // 1. Sprawdź CustomRoleUtils (najbardziej prawdopodobne)
+            var utilsType = typeof(CustomRoleUtils);
+            if (utilsType != null)
+            {
+                // Szukamy metod: SetRole, AssignRole, SetCustomRole
+                _assignRoleMethod = utilsType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
+                if (_assignRoleMethod == null) _assignRoleMethod = utilsType.GetMethod("AssignRole", BindingFlags.Public | BindingFlags.Static);
+                if (_assignRoleMethod == null) _assignRoleMethod = utilsType.GetMethod("SetCustomRole", BindingFlags.Public | BindingFlags.Static);
+            }
+
+            // 2. Jeśli nie, sprawdź CustomRoleManager
+            if (_assignRoleMethod == null)
+            {
+                var mgrType = typeof(CustomRoleManager);
+                if (mgrType != null)
+                {
+                    _assignRoleMethod = mgrType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
+                    if (_assignRoleMethod == null) _assignRoleMethod = mgrType.GetMethod("AssignRole", BindingFlags.Public | BindingFlags.Static);
+                }
+            }
+            
+            // 3. Sprawdź TouRoleUtils (z TownOfUs)
+            if (_assignRoleMethod == null)
+            {
+                 // Próbujemy znaleźć typ po nazwie, bo może nie być zaimportowany
+                 var touUtils = System.Type.GetType("TownOfUs.Utilities.TouRoleUtils, TownOfUsMira");
+                 if (touUtils != null)
+                 {
+                     _assignRoleMethod = touUtils.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
+                 }
+            }
+
+            if (_assignRoleMethod != null)
+                Debug.Log($"[Draft] ZNALEZIONO metodę: {_assignRoleMethod.Name} w {_assignRoleMethod.DeclaringType.Name}");
+            else
+                Debug.LogError("[Draft] KRYTYCZNE: Nie znaleziono metody przypisywania ról! Będę używał Vanilla RPC.");
         }
 
         public void ProcessNextTurn()
@@ -141,6 +194,7 @@ namespace TownOfUsDraft
 
         private void AssignRealRole(PlayerControl player, string roleName)
         {
+            // Znajdź rolę
             var allRoles = CustomRoleManager.AllRoles;
             ICustomRole roleToAssign = null;
             
@@ -148,8 +202,7 @@ namespace TownOfUsDraft
             {
                 if (roleObj is ICustomRole iRole)
                 {
-                    // NAPRAWA: Używamy ToString(), bo Name nie istnieje w interfejsie
-                    if (iRole.ToString() == roleName)
+                    if (iRole.ToString() == roleName) // Używamy ToString() dla bezpieczeństwa
                     {
                         roleToAssign = iRole;
                         break;
@@ -159,19 +212,38 @@ namespace TownOfUsDraft
 
             if (roleToAssign != null)
             {
-                // NAPRAWA: Używamy managera do nadania roli
-                // CustomRoleManager jest Singletonem w MiraAPI (przez CustomRoleSingleton) lub statyczny.
-                // Najczęstszy wzorzec w MiraAPI:
-                CustomRoleManager.Instance.SetRole(player, roleToAssign);
-                
-                Debug.Log($"[Draft] Przypisano {roleName} dla {player.Data.PlayerName}");
+                // UŻYWAMY ZNALEZIONEJ METODY (REFLEKSJA)
+                if (_assignRoleMethod != null)
+                {
+                    try 
+                    {
+                        // Wywołanie: Metoda(player, role)
+                        _assignRoleMethod.Invoke(null, new object[] { player, roleToAssign });
+                        Debug.Log($"[Draft] Przypisano {roleName} (Refleksja) dla {player.Data.PlayerName}");
+                    }
+                    catch (System.Exception e)
+                    {
+                        Debug.LogError($"[Draft] Błąd przy wywołaniu metody przypisania: {e.Message}");
+                        // Fallback
+                        SetVanillaFallback(player, roleName);
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning("[Draft] Brak metody przypisania. Używam Vanilla.");
+                    SetVanillaFallback(player, roleName);
+                }
             }
             else
             {
-                // Fallback dla Vanilla
-                if (roleName == "Impostor") player.RpcSetRole(RoleTypes.Impostor);
-                else player.RpcSetRole(RoleTypes.Crewmate);
+                SetVanillaFallback(player, roleName);
             }
+        }
+
+        private void SetVanillaFallback(PlayerControl player, string roleName)
+        {
+            if (roleName == "Impostor") player.RpcSetRole(RoleTypes.Impostor);
+            else player.RpcSetRole(RoleTypes.Crewmate);
         }
 
         public static PlayerControl GetPlayerById(byte id)
