@@ -20,8 +20,6 @@ namespace TownOfUsDraft
         
         private static MethodInfo _assignRoleMethod;
         private static bool _assignMethodSearched = false;
-        
-        // Cache do opcji TOU
         private static object _roleOptionsInstance;
         private static System.Type _roleOptionsType;
 
@@ -29,12 +27,12 @@ namespace TownOfUsDraft
         {
             if (!AmongUsClient.Instance.AmHost) return;
 
-            Debug.Log("[Draft] --- START DRAFTU (STATIC MODE) ---");
+            Debug.Log("[Draft] --- START DRAFTU (STATIC FIX) ---");
             
             FindAssignmentMethod();
             LoadTouOptionsRef(); 
 
-            // 1. Przygotuj pulę (tylko włączone role > 0%)
+            // 1. Inicjalizacja puli (tylko włączone role > 0%)
             RoleCategorizer.InitializeRoles();
 
             HostDraftAssignments.Clear();
@@ -51,18 +49,23 @@ namespace TownOfUsDraft
             System.Random rng = new System.Random();
             players = players.OrderBy(x => rng.Next()).ToList();
 
-            // 3. Pobierz ustawienia gry
+            // 3. Pobierz Config Gry
             int impostors = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
-            int nkCount = GetConfigInt("NeutralKilling");
-            int neCount = GetConfigInt("NeutralEvil");
-            int nbCount = GetConfigInt("NeutralBenign");
+            int nkCount = GetConfigInt("NeutralKilling", "MaxNeutralKilling");
+            int neCount = GetConfigInt("NeutralEvil", "MaxNeutralEvil");
+            int nbCount = GetConfigInt("NeutralBenign", "MaxNeutralBenign");
+
+            // Limity Crewmate (próba pobrania z TOU, jeśli istnieją)
+            int maxSupport = GetConfigInt("MaxSupport", "CrewmateSupport", "SupportCount"); 
+            int maxInvest = GetConfigInt("MaxInvestigative", "CrewmateInvestigative", "InvestigativeCount");
+            int maxPower = GetConfigInt("MaxPower", "CrewmatePower", "PowerCount");
+            int maxKilling = GetConfigInt("MaxKilling", "CrewmateKilling", "KillingCount");
+            int maxProtective = GetConfigInt("MaxProtective", "CrewmateProtective", "ProtectiveCount");
 
             Debug.Log($"[Draft Config] Imp: {impostors}, NK: {nkCount}, NE: {neCount}, NB: {nbCount}");
 
             int assignedCount = 0;
 
-            // --- PRZYDZIELANIE SLOTÓW (KATEGORII) ---
-            
             // A. Impostorzy
             for (int i = 0; i < impostors && assignedCount < players.Count; i++) {
                 HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.Impostor; assignedCount++;
@@ -79,30 +82,26 @@ namespace TownOfUsDraft
                 HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.NeutralBenign; assignedCount++;
             }
 
-            // C. Crewmates - AUTOMATYCZNY BALANS
-            // Ponieważ config TOU nie ma suwaków "Max Support", robimy cykl, żeby team był zróżnicowany
-            var crewTypes = new List<DraftCategory> { 
-                DraftCategory.Support, DraftCategory.Investigative, 
-                DraftCategory.Protective, DraftCategory.Power, DraftCategory.Killing 
-            };
-            int crewTypeIndex = 0;
+            // C. Crewmates - jeśli brak limitów w configu, balansujemy sami
+            int currentSupport = 0, currentInvest = 0, currentPower = 0, currentKilling = 0, currentProtective = 0;
 
             while (assignedCount < players.Count)
             {
-                // Wybieramy kategorię z listy, jeśli ma jakieś włączone role
-                DraftCategory candidate = DraftCategory.Crewmate;
-                
-                // Próbujemy znaleźć kategorię, która ma role (zabezpieczenie przed pustymi)
-                for(int k=0; k < crewTypes.Count; k++) {
-                    var cat = crewTypes[(crewTypeIndex + k) % crewTypes.Count];
-                    if (RoleCategorizer.HasRoles(cat)) {
-                        candidate = cat;
-                        crewTypeIndex = (crewTypeIndex + k + 1) % crewTypes.Count; // Przesuń na następną dla kolejnego gracza
-                        break;
-                    }
+                DraftCategory cat = DraftCategory.Crewmate;
+
+                // Próba wpasowania w limity configu
+                if (currentSupport < maxSupport) { cat = DraftCategory.Support; currentSupport++; }
+                else if (currentInvest < maxInvest) { cat = DraftCategory.Investigative; currentInvest++; }
+                else if (currentPower < maxPower) { cat = DraftCategory.Power; currentPower++; }
+                else if (currentKilling < maxKilling) { cat = DraftCategory.Killing; currentKilling++; }
+                else if (currentProtective < maxProtective) { cat = DraftCategory.Protective; currentProtective++; }
+                else 
+                {
+                    // Fallback: Jeśli config nie określa, losujemy podkategorię
+                    cat = RoleCategorizer.GetRandomCrewmateCategory();
                 }
 
-                HostDraftAssignments[players[assignedCount].PlayerId] = candidate;
+                HostDraftAssignments[players[assignedCount].PlayerId] = cat;
                 assignedCount++;
             }
 
@@ -122,24 +121,14 @@ namespace TownOfUsDraft
 
             if (player == null || player.Data.Disconnected) { ProcessNextTurn(); return; }
 
-            // Pobierz kategorię
+            // Pobieramy kategorię przypisaną graczowi
             DraftCategory cat = HostDraftAssignments.ContainsKey(currentPlayerId) ? HostDraftAssignments[currentPlayerId] : DraftCategory.Crewmate;
 
-            // 3 role + Random
+            // Pobieramy role (tylko włączone) + Random
             List<string> options = RoleCategorizer.GetRandomRoles(cat, 3);
             options.Add("Random");
 
             SendTurnRpc(currentPlayerId, options);
-        }
-
-        public static void OnPlayerSelectedRole(string roleName)
-        {
-            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 249, Hazel.SendOption.Reliable);
-            writer.Write(PlayerControl.LocalPlayer.PlayerId);
-            writer.Write(roleName);
-            AmongUsClient.Instance.FinishRpcImmediately(writer);
-
-            if (AmongUsClient.Instance.AmHost) OnPlayerPickedRole(PlayerControl.LocalPlayer.PlayerId, roleName);
         }
 
         public static void OnPlayerPickedRole(byte playerId, string selectedOption)
@@ -147,7 +136,7 @@ namespace TownOfUsDraft
             Debug.Log($"[Draft] Gracz {playerId} wybrał: {selectedOption}");
             string finalRoleName = selectedOption;
 
-            // Logika RANDOM - losuje z przypisanej kategorii
+            // LOGIKA RANDOM: Losujemy 1 rolę z PRZYPISANEJ kategorii
             if (selectedOption == "Random")
             {
                 if (HostDraftAssignments.ContainsKey(playerId))
@@ -160,15 +149,27 @@ namespace TownOfUsDraft
             }
 
             if (!PendingRoles.ContainsKey(playerId)) PendingRoles[playerId] = finalRoleName;
+            
             if (AmongUsClient.Instance.AmHost) ProcessNextTurn();
+        }
+        
+        // Metoda wywoływana przez lokalne UI (DraftHud)
+        public static void OnPlayerSelectedRole(string roleName)
+        {
+            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 249, Hazel.SendOption.Reliable);
+            writer.Write(PlayerControl.LocalPlayer.PlayerId);
+            writer.Write(roleName);
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+
+            if (AmongUsClient.Instance.AmHost) OnPlayerPickedRole(PlayerControl.LocalPlayer.PlayerId, roleName);
         }
 
         private static void EndDraft()
         {
-            Debug.Log("[Draft] Koniec. Aplikowanie ról...");
+            Debug.Log("[Draft] Koniec.");
             IsDraftActive = false;
             
-            // Schowaj HUD u wszystkich (RPC 252)
+            // Zamknij HUD u wszystkich
             MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 252, Hazel.SendOption.Reliable);
             AmongUsClient.Instance.FinishRpcImmediately(writer);
 
@@ -179,7 +180,25 @@ namespace TownOfUsDraft
             }
         }
 
-        // --- TECHNIKALIA I REFLEKSJA ---
+        // --- BRAKUJĄCE METODY RPC (Fix CS0103) ---
+        private static void SendStartDraftRpc(List<byte> order)
+        {
+            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 251, Hazel.SendOption.Reliable);
+            writer.Write(order.Count);
+            foreach(var id in order) writer.Write(id);
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+        }
+
+        private static void SendTurnRpc(byte playerId, List<string> options)
+        {
+            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 250, Hazel.SendOption.Reliable);
+            writer.Write(playerId);
+            writer.Write(options.Count);
+            foreach(var role in options) writer.Write(role);
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+        }
+
+        // --- HELPERS (Config, Reflection, Assignment) ---
 
         private static void FindAssignmentMethod()
         {
@@ -225,63 +244,35 @@ namespace TownOfUsDraft
         {
             var allRoles = CustomRoleManager.AllRoles;
             ICustomRole roleToAssign = null;
-            
             foreach(var roleObj in allRoles) {
-                if (roleObj is ICustomRole iRole) {
-                    if (iRole.ToString() == roleName) {
-                        roleToAssign = iRole;
-                        break;
-                    }
+                if (roleObj is ICustomRole iRole && iRole.ToString() == roleName) {
+                    roleToAssign = iRole; break;
                 }
             }
 
             if (roleToAssign != null && _assignRoleMethod != null)
             {
-                try { _assignRoleMethod.Invoke(null, new object[] { player, roleToAssign }); 
-                      Debug.Log($"[Draft] Rola {roleName} nadana przez Refleksję."); }
+                try { _assignRoleMethod.Invoke(null, new object[] { player, roleToAssign }); }
                 catch { SetVanillaFallback(player, roleName); }
             }
             else SetVanillaFallback(player, roleName);
         }
 
-        private static void SetVanillaFallback(PlayerControl player, string roleName)
-        {
+        private static void SetVanillaFallback(PlayerControl player, string roleName) {
             if (roleName.Contains("Impostor")) player.RpcSetRole(RoleTypes.Impostor);
             else player.RpcSetRole(RoleTypes.Crewmate);
         }
-
-        public static PlayerControl GetPlayerById(byte id)
-        {
+        
+        public static PlayerControl GetPlayerById(byte id) {
             foreach (var p in PlayerControl.AllPlayerControls) if (p.PlayerId == id) return p;
             return null;
         }
-
-        public static void OnTurnStarted(byte playerId, List<string> options)
-        {
+        
+        public static void OnTurnStarted(byte playerId, List<string> options) {
             if (playerId == PlayerControl.LocalPlayer.PlayerId && DraftHud.Instance != null)
                 DraftHud.Instance.ShowSelection(options);
         }
-        
-        public static void OnDraftEnded() // Dla klienta
-        {
-             if (DraftHud.Instance != null) DraftHud.Instance.ShowHud = false;
-        }
-
-        private static void SendStartDraftRpc(List<byte> order)
-        {
-            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 251, Hazel.SendOption.Reliable);
-            writer.Write(order.Count);
-            foreach(var id in order) writer.Write(id);
-            AmongUsClient.Instance.FinishRpcImmediately(writer);
-        }
-
-        private static void SendTurnRpc(byte playerId, List<string> options)
-        {
-            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 250, Hazel.SendOption.Reliable);
-            writer.Write(playerId);
-            writer.Write(options.Count);
-            foreach(var role in options) writer.Write(role);
-            AmongUsClient.Instance.FinishRpcImmediately(writer);
-        }
+        public static void OnDraftEnded() { if (DraftHud.Instance != null) DraftHud.Instance.ShowHud = false; }
+        public static void ApplyRoleFromRpc(byte playerId, string roleName) { }
     }
 }

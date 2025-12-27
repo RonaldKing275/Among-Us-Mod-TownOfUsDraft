@@ -19,7 +19,6 @@ namespace TownOfUsDraft
             _cachedRoles = new Dictionary<DraftCategory, List<string>>();
             foreach (DraftCategory cat in System.Enum.GetValues(typeof(DraftCategory))) _cachedRoles[cat] = new List<string>();
 
-            // Refleksja do opcji
             try {
                 var type = System.Type.GetType("TownOfUs.Options.RoleOptions, TownOfUsMira");
                 if (type != null) _roleOptionsInstance = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
@@ -32,8 +31,6 @@ namespace TownOfUsDraft
                 if (roleObj is ICustomRole iRole)
                 {
                     string roleName = iRole.ToString();
-
-                    // --- FILTROWANIE ---
                     if (!IsRoleEnabledInConfig(roleName)) continue;
 
                     if (roleObj is ITownOfUsRole touRole)
@@ -49,7 +46,6 @@ namespace TownOfUsDraft
                 }
             }
             
-            // Fallbacki
             if (_cachedRoles[DraftCategory.Crewmate].Count == 0) _cachedRoles[DraftCategory.Crewmate].Add("Crewmate");
             if (_cachedRoles[DraftCategory.Impostor].Count == 0) _cachedRoles[DraftCategory.Impostor].Add("Impostor");
         }
@@ -59,30 +55,37 @@ namespace TownOfUsDraft
              return _cachedRoles != null && _cachedRoles.ContainsKey(cat) && _cachedRoles[cat].Count > 0;
         }
 
+        // --- NAPRAWA BŁĘDU CS0117 ---
+        public static DraftCategory GetRandomCrewmateCategory()
+        {
+            var validCats = new List<DraftCategory> { 
+                DraftCategory.Support, DraftCategory.Investigative, 
+                DraftCategory.Killing, DraftCategory.Power, DraftCategory.Protective 
+            };
+            return validCats[Random.Range(0, validCats.Count)];
+        }
+
         private static bool IsRoleEnabledInConfig(string roleName)
         {
             if (_roleOptionsInstance == null) return true;
             try 
             {
                 string sanitizedName = roleName.Replace(" ", "");
-                // Szukamy pola o nazwie roli (standard TOU)
                 var prop = _roleOptionsInstance.GetType().GetProperty(sanitizedName);
                 object optObj = null;
                 if (prop != null) optObj = prop.GetValue(_roleOptionsInstance);
                 else {
-                    // Fallback: Szukamy z dopiskiem "Options"
                     var field = _roleOptionsInstance.GetType().GetField(sanitizedName + "Options");
                     if (field != null) optObj = field.GetValue(_roleOptionsInstance);
                 }
 
                 if (optObj != null)
                 {
-                    // Szukamy SpawnChance / Value
                     var chanceProp = optObj.GetType().GetProperty("SpawnChance") ?? optObj.GetType().GetProperty("Value");
                     if (chanceProp != null)
                     {
                         float val = System.Convert.ToSingle(chanceProp.GetValue(optObj));
-                        if (val <= 0) return false; // Wyłączona
+                        if (val <= 0) return false; 
                     }
                 }
             } catch {}
