@@ -19,9 +19,7 @@ namespace TownOfUsDraft
             _cachedRoles = new Dictionary<DraftCategory, List<string>>();
             foreach (DraftCategory cat in System.Enum.GetValues(typeof(DraftCategory))) _cachedRoles[cat] = new List<string>();
 
-            Debug.Log("[Draft] Inicjalizacja puli ról (Sprawdzam Config)...");
-
-            // Przygotuj refleksję do configu
+            // Refleksja do opcji
             try {
                 var type = System.Type.GetType("TownOfUs.Options.RoleOptions, TownOfUsMira");
                 if (type != null) _roleOptionsInstance = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
@@ -35,13 +33,8 @@ namespace TownOfUsDraft
                 {
                     string roleName = iRole.ToString();
 
-                    // --- FILTROWANIE CONFIGU ---
-                    // Sprawdzamy czy rola jest włączona w opcjach lobby
-                    if (!IsRoleEnabledInConfig(roleName)) 
-                    {
-                        // Debug.Log($"[Draft] Rola {roleName} jest wyłączona (0%). Pomijam.");
-                        continue;
-                    }
+                    // --- FILTROWANIE ---
+                    if (!IsRoleEnabledInConfig(roleName)) continue;
 
                     if (roleObj is ITownOfUsRole touRole)
                     {
@@ -60,71 +53,46 @@ namespace TownOfUsDraft
             if (_cachedRoles[DraftCategory.Crewmate].Count == 0) _cachedRoles[DraftCategory.Crewmate].Add("Crewmate");
             if (_cachedRoles[DraftCategory.Impostor].Count == 0) _cachedRoles[DraftCategory.Impostor].Add("Impostor");
         }
+        
+        public static bool HasRoles(DraftCategory cat)
+        {
+             return _cachedRoles != null && _cachedRoles.ContainsKey(cat) && _cachedRoles[cat].Count > 0;
+        }
 
         private static bool IsRoleEnabledInConfig(string roleName)
         {
             if (_roleOptionsInstance == null) return true;
-            
             try 
             {
-                string sanitizedName = roleName.Replace(" ", ""); // np. "Glitch"
-                
-                // 1. Szukamy pola o nazwie roli (np. pole "Sheriff" w klasie RoleOptions) - to jest standard TOU
-                var optionsField = _roleOptionsInstance.GetType().GetField(sanitizedName);
-                if (optionsField == null) optionsField = _roleOptionsInstance.GetType().GetProperty(sanitizedName)?.GetGetMethod()?.DeclaringType.GetField(sanitizedName);
-                
-                // 2. Fallback: Jeśli nie znaleziono, szukamy z dopiskiem "Options" (np. "SheriffOptions")
-                if (optionsField == null)
-                {
-                     string altName = sanitizedName + "Options";
-                     optionsField = _roleOptionsInstance.GetType().GetField(altName);
+                string sanitizedName = roleName.Replace(" ", "");
+                // Szukamy pola o nazwie roli (standard TOU)
+                var prop = _roleOptionsInstance.GetType().GetProperty(sanitizedName);
+                object optObj = null;
+                if (prop != null) optObj = prop.GetValue(_roleOptionsInstance);
+                else {
+                    // Fallback: Szukamy z dopiskiem "Options"
+                    var field = _roleOptionsInstance.GetType().GetField(sanitizedName + "Options");
+                    if (field != null) optObj = field.GetValue(_roleOptionsInstance);
                 }
 
-                if (optionsField == null)
+                if (optObj != null)
                 {
-                    // Jeśli nadal null, spróbujmy przez Property (czasem pola są ukryte za właściwościami)
-                    var prop = _roleOptionsInstance.GetType().GetProperty(sanitizedName);
-                    if (prop != null)
+                    // Szukamy SpawnChance / Value
+                    var chanceProp = optObj.GetType().GetProperty("SpawnChance") ?? optObj.GetType().GetProperty("Value");
+                    if (chanceProp != null)
                     {
-                        var optObj = prop.GetValue(_roleOptionsInstance);
-                        return CheckSpawnChance(optObj);
+                        float val = System.Convert.ToSingle(chanceProp.GetValue(optObj));
+                        if (val <= 0) return false; // Wyłączona
                     }
                 }
-
-                if (optionsField != null)
-                {
-                    var roleOptionsObj = optionsField.GetValue(_roleOptionsInstance);
-                    return CheckSpawnChance(roleOptionsObj);
-                }
-            }
-            catch {}
-            
-            return true; // Domyślnie włączone w razie błędu
-        }
-
-        private static bool CheckSpawnChance(object optionObj)
-        {
-            if (optionObj == null) return true;
-            
-            // Wewnątrz obiektu opcji (np. SheriffOptions) szukamy "SpawnChance"
-            var chanceProp = optionObj.GetType().GetProperty("SpawnChance");
-            if (chanceProp == null) chanceProp = optionObj.GetType().GetProperty("Value"); // Niektóre role mają Value
-
-            if (chanceProp != null)
-            {
-                float val = System.Convert.ToSingle(chanceProp.GetValue(optionObj));
-                // Jeśli 0 lub mniej -> WYŁĄCZONA
-                if (val <= 0) return false;
-            }
+            } catch {}
             return true;
         }
 
         public static List<string> GetRandomRoles(DraftCategory category, int count)
         {
             if (_cachedRoles == null) InitializeRoles();
-            
-            // Jeśli kategoria jest pusta (brak ról w configu), weź Crewmate
-            if (!_cachedRoles.ContainsKey(category) || _cachedRoles[category].Count == 0) 
+            if (!HasRoles(category)) 
             {
                 if(category != DraftCategory.Impostor) return GetRandomRoles(DraftCategory.Crewmate, count);
                 return new List<string>{"Impostor"};
@@ -132,7 +100,6 @@ namespace TownOfUsDraft
 
             List<string> pool = new List<string>(_cachedRoles[category]);
             List<string> picked = new List<string>();
-
             for (int i = 0; i < count; i++)
             {
                 if (pool.Count == 0) pool = new List<string>(_cachedRoles[category]);
@@ -141,15 +108,6 @@ namespace TownOfUsDraft
                 pool.RemoveAt(idx);
             }
             return picked;
-        }
-        
-        public static DraftCategory GetRandomCrewmateCategory()
-        {
-            var validCats = new List<DraftCategory> { 
-                DraftCategory.Support, DraftCategory.Investigative, DraftCategory.Killing, 
-                DraftCategory.Power, DraftCategory.Protective 
-            };
-            return validCats[Random.Range(0, validCats.Count)];
         }
 
         private static DraftCategory MapTouAlignment(RoleAlignment alignment)

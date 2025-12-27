@@ -10,39 +10,34 @@ namespace TownOfUsDraft.Patches
         [HarmonyPrefix]
         public static void Prefix(PlayerControl __instance, [HarmonyArgument(0)] byte callId, [HarmonyArgument(1)] MessageReader reader)
         {
-            // RPC 251: Start Draft
-            if (callId == 251)
+            if (callId == 251) // Start Draft
             {
                 int count = reader.ReadInt32();
-                // Logika startu u klienta...
+                // Opcjonalnie: pobierz listę, ale głównie chodzi o to, by nie crashowało
                 return;
             }
 
-            // RPC 250: Turn Info
-            if (callId == 250)
+            if (callId == 250) // Turn Info
             {
                 byte playerId = reader.ReadByte();
                 int optionCount = reader.ReadInt32();
                 List<string> options = new List<string>();
                 for(int i=0; i<optionCount; i++) options.Add(reader.ReadString());
 
-                if (DraftManager.Instance != null)
-                {
-                    DraftManager.Instance.OnTurnStarted(playerId, options);
-                }
+                DraftManager.OnTurnStarted(playerId, options);
                 return;
             }
 
-            // RPC 249: Select Role (Klient wysyła wybór)
-            if (callId == 249)
+            if (callId == 249) // Select Role
             {
                 byte playerId = reader.ReadByte();
                 string roleName = reader.ReadString();
-
-                if (DraftManager.Instance != null)
-                {
-                    DraftManager.Instance.OnPlayerPickedRole(playerId, roleName);
-                }
+                DraftManager.OnPlayerPickedRole(playerId, roleName);
+            }
+            
+            if (callId == 252) // End Draft
+            {
+                DraftManager.OnDraftEnded();
             }
         }
     }
