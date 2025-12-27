@@ -7,7 +7,7 @@ using MiraAPI.GameOptions;
 using TownOfUs.Options;    
 using Hazel;               
 using TownOfUs.Roles;
-using System.Reflection; // Niezbędne do Refleksji
+using System.Reflection;
 
 namespace TownOfUsDraft
 {
@@ -19,11 +19,13 @@ namespace TownOfUsDraft
         public Dictionary<byte, DraftCategory> HostDraftAssignments = new Dictionary<byte, DraftCategory>();
         public Dictionary<byte, string> PendingRoles = new Dictionary<byte, string>();
         public bool IsDraftActive = false;
-        public List<string> CurrentPool = new List<string>();
-
-        // Cache dla metody przypisującej rolę
+        
         private MethodInfo _assignRoleMethod;
         private bool _assignMethodSearched = false;
+        
+        // Cache do opcji TOU (zeby nie szukac co chwile)
+        private object _roleOptionsInstance;
+        private System.Type _roleOptionsType;
 
         private void Awake()
         {
@@ -37,20 +39,18 @@ namespace TownOfUsDraft
 
             Debug.Log("[Draft] --- START DRAFTU ---");
             
-            // Szukamy metody przypisywania ról (tylko raz)
             FindAssignmentMethod();
+            LoadTouOptionsRef(); // Załaduj config TOU do pamięci
+
+            // Inicjalizacja puli ról (tylko włączone w configu!)
+            RoleCategorizer.InitializeRoles();
 
             HostDraftAssignments.Clear();
             TurnQueue.Clear();
             PendingRoles.Clear();
             IsDraftActive = true;
 
-            int impostors = 0;
-            if (GameOptionsManager.Instance != null && GameOptionsManager.Instance.CurrentGameOptions != null)
-                impostors = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
-            
-            Debug.Log($"[Draft] Config: Imp={impostors}");
-
+            // --- 1. Gracze ---
             List<PlayerControl> players = PlayerControl.AllPlayerControls.ToArray().ToList();
             players.RemoveAll(p => p.Data.Disconnected || p.Data.IsDead);
             
@@ -59,20 +59,66 @@ namespace TownOfUsDraft
             System.Random rng = new System.Random();
             players = players.OrderBy(x => rng.Next()).ToList();
 
+            // --- 2. Odczyt Configu Gry ---
+            // Pobieramy limity z ustawień TOU
+            int impostors = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
+            
+            int nkCount = GetConfigInt("NeutralKilling");
+            int neCount = GetConfigInt("NeutralEvil");
+            int nbCount = GetConfigInt("NeutralBenign");
+            
+            // Opcjonalne limity Crewmate (jesli TOU je ma)
+            int maxSupport = GetConfigInt("MaxSupport"); 
+            int maxInvest = GetConfigInt("MaxInvestigative");
+            int maxPower = GetConfigInt("MaxPower");
+            int maxKilling = GetConfigInt("MaxKilling"); // Np. Sheriff/Veteran
+
+            Debug.Log($"[Draft Config] Imp: {impostors}, NK: {nkCount}, NE: {neCount}, NB: {nbCount}");
+
             int assignedCount = 0;
 
+            // A. Przydziel Impostorów
             for (int i = 0; i < impostors && assignedCount < players.Count; i++)
             {
                 HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.Impostor;
                 assignedCount++;
             }
-            
+
+            // B. Przydziel Neutrale (NK -> NE -> NB)
+            for (int i = 0; i < nkCount && assignedCount < players.Count; i++) {
+                HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.NeutralKilling; assignedCount++;
+            }
+            for (int i = 0; i < neCount && assignedCount < players.Count; i++) {
+                HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.NeutralEvil; assignedCount++;
+            }
+            for (int i = 0; i < nbCount && assignedCount < players.Count; i++) {
+                HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.NeutralBenign; assignedCount++;
+            }
+
+            // C. Przydziel Crewmates (wg limitów lub losowo)
+            // Używamy prostego licznika ile już przydzieliliśmy konkretnych podkategorii
+            int currentSupport = 0, currentInvest = 0, currentPower = 0, currentKilling = 0;
+
             while (assignedCount < players.Count)
             {
-                HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.Crewmate;
+                DraftCategory cat = DraftCategory.Crewmate;
+
+                // Próba wpasowania w konkretne podkategorie jeśli są włączone
+                if (currentSupport < maxSupport) { cat = DraftCategory.Support; currentSupport++; }
+                else if (currentInvest < maxInvest) { cat = DraftCategory.Investigative; currentInvest++; }
+                else if (currentPower < maxPower) { cat = DraftCategory.Power; currentPower++; }
+                else if (currentKilling < maxKilling) { cat = DraftCategory.Killing; currentKilling++; }
+                else 
+                {
+                    // Jak limity wyczerpane albo ich nie ma, daj losową podkategorię Crewmate
+                    cat = RoleCategorizer.GetRandomCrewmateCategory();
+                }
+
+                HostDraftAssignments[players[assignedCount].PlayerId] = cat;
                 assignedCount++;
             }
 
+            // --- 3. Kolejka ---
             foreach(var p in players)
             {
                 TurnQueue.Enqueue(p.PlayerId);
@@ -82,86 +128,62 @@ namespace TownOfUsDraft
             ProcessNextTurn();
         }
 
-        private void FindAssignmentMethod()
+        // --- REFLEKSJA DO CONFIGU ---
+        private void LoadTouOptionsRef()
         {
-            if (_assignMethodSearched) return;
-            _assignMethodSearched = true;
-
-            Debug.Log("[Draft] Szukanie metody przypisywania ról w MiraAPI/TOU...");
-
-            // 1. Sprawdź CustomRoleUtils (najbardziej prawdopodobne)
-            var utilsType = typeof(CustomRoleUtils);
-            if (utilsType != null)
-            {
-                // Szukamy metod: SetRole, AssignRole, SetCustomRole
-                _assignRoleMethod = utilsType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
-                if (_assignRoleMethod == null) _assignRoleMethod = utilsType.GetMethod("AssignRole", BindingFlags.Public | BindingFlags.Static);
-                if (_assignRoleMethod == null) _assignRoleMethod = utilsType.GetMethod("SetCustomRole", BindingFlags.Public | BindingFlags.Static);
-            }
-
-            // 2. Jeśli nie, sprawdź CustomRoleManager
-            if (_assignRoleMethod == null)
-            {
-                var mgrType = typeof(CustomRoleManager);
-                if (mgrType != null)
-                {
-                    _assignRoleMethod = mgrType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
-                    if (_assignRoleMethod == null) _assignRoleMethod = mgrType.GetMethod("AssignRole", BindingFlags.Public | BindingFlags.Static);
+            try {
+                // Próbujemy znaleźć Singleton opcji
+                var type = System.Type.GetType("TownOfUs.Options.RoleOptions, TownOfUsMira");
+                if (type != null) {
+                    _roleOptionsType = type;
+                    var singleton = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+                    if (singleton != null) _roleOptionsInstance = singleton.GetValue(null);
                 }
-            }
-            
-            // 3. Sprawdź TouRoleUtils (z TownOfUs)
-            if (_assignRoleMethod == null)
-            {
-                 // Próbujemy znaleźć typ po nazwie, bo może nie być zaimportowany
-                 var touUtils = System.Type.GetType("TownOfUs.Utilities.TouRoleUtils, TownOfUsMira");
-                 if (touUtils != null)
-                 {
-                     _assignRoleMethod = touUtils.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
-                 }
-            }
+            } catch (System.Exception e) { Debug.LogError("[Draft] Błąd ładowania opcji TOU: " + e.Message); }
+        }
 
-            if (_assignRoleMethod != null)
-                Debug.Log($"[Draft] ZNALEZIONO metodę: {_assignRoleMethod.Name} w {_assignRoleMethod.DeclaringType.Name}");
-            else
-                Debug.LogError("[Draft] KRYTYCZNE: Nie znaleziono metody przypisywania ról! Będę używał Vanilla RPC.");
+        private int GetConfigInt(string fieldName)
+        {
+            if (_roleOptionsInstance == null || _roleOptionsType == null) return 0;
+            try {
+                // Szukamy pola/właściwości o nazwie np. NeutralKilling
+                var field = _roleOptionsType.GetField(fieldName);
+                object optionObj = null;
+                
+                if (field != null) optionObj = field.GetValue(_roleOptionsInstance);
+                else {
+                    var prop = _roleOptionsType.GetProperty(fieldName);
+                    if (prop != null) optionObj = prop.GetValue(_roleOptionsInstance);
+                }
+
+                if (optionObj != null) {
+                    // To jest obiekt typu ModdedNumberOption lub podobny. Szukamy pola .Value
+                    var valProp = optionObj.GetType().GetProperty("Value");
+                    if (valProp != null) {
+                        float fVal = (float)valProp.GetValue(optionObj);
+                        return (int)fVal;
+                    }
+                }
+            } catch {}
+            return 0; // Domyślnie 0 jeśli nie znajdzie
         }
 
         public void ProcessNextTurn()
         {
-            if (TurnQueue.Count == 0)
-            {
-                EndDraft();
-                return;
-            }
+            if (TurnQueue.Count == 0) { EndDraft(); return; }
 
             byte currentPlayerId = TurnQueue.Dequeue();
             PlayerControl player = GetPlayerById(currentPlayerId);
 
-            if (player == null || player.Data.Disconnected)
-            {
-                ProcessNextTurn();
-                return;
-            }
+            if (player == null || player.Data.Disconnected) { ProcessNextTurn(); return; }
 
             DraftCategory cat = HostDraftAssignments.ContainsKey(currentPlayerId) ? HostDraftAssignments[currentPlayerId] : DraftCategory.Crewmate;
-            
-            if (cat == DraftCategory.Crewmate)
-            {
-                DraftCategory[] crewSubs = { DraftCategory.Support, DraftCategory.Investigative, DraftCategory.Protective, DraftCategory.Power, DraftCategory.Killing };
-                cat = crewSubs[Random.Range(0, crewSubs.Length)];
-            }
 
-            CurrentPool = RoleCategorizer.GetRandomRoles(cat, 3);
-            SendTurnRpc(currentPlayerId, CurrentPool);
-        }
+            // 1. Pobierz 3 role z kategorii (tylko te włączone w configu, bo RoleCategorizer już je przefiltrował)
+            List<string> options = RoleCategorizer.GetRandomRoles(cat, 3);
+            options.Add("Random"); // 4. Przycisk
 
-        public void OnPlayerPickedRole(byte playerId, string roleName)
-        {
-            Debug.Log($"[Draft] Gracz {playerId} wybrał: {roleName}");
-            if (!PendingRoles.ContainsKey(playerId)) PendingRoles[playerId] = roleName;
-
-            if (AmongUsClient.Instance.AmHost) ProcessNextTurn();
+            SendTurnRpc(currentPlayerId, options);
         }
 
         public void OnPlayerSelectedRole(string roleName)
@@ -171,97 +193,94 @@ namespace TownOfUsDraft
             writer.Write(roleName);
             AmongUsClient.Instance.FinishRpcImmediately(writer);
 
-            if (AmongUsClient.Instance.AmHost)
+            if (AmongUsClient.Instance.AmHost) OnPlayerPickedRole(PlayerControl.LocalPlayer.PlayerId, roleName);
+        }
+
+        public void OnPlayerPickedRole(byte playerId, string selectedOption)
+        {
+            Debug.Log($"[Draft] Gracz {playerId} wybrał: {selectedOption}");
+            string finalRoleName = selectedOption;
+
+            if (selectedOption == "Random")
             {
-                OnPlayerPickedRole(PlayerControl.LocalPlayer.PlayerId, roleName);
+                if (HostDraftAssignments.ContainsKey(playerId))
+                {
+                    // Losuj z przydzielonej kategorii
+                    var oneRandom = RoleCategorizer.GetRandomRoles(HostDraftAssignments[playerId], 1);
+                    if (oneRandom.Count > 0) finalRoleName = oneRandom[0];
+                }
             }
+
+            if (!PendingRoles.ContainsKey(playerId)) PendingRoles[playerId] = finalRoleName;
+            if (AmongUsClient.Instance.AmHost) ProcessNextTurn();
         }
 
         private void EndDraft()
         {
             Debug.Log("[Draft] Koniec. Aplikowanie ról...");
             IsDraftActive = false;
-
             foreach(var kvp in PendingRoles)
             {
                 PlayerControl p = GetPlayerById(kvp.Key);
                 if (p != null) AssignRealRole(p, kvp.Value);
             }
-            
             MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, 252, Hazel.SendOption.Reliable);
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
 
+        private void FindAssignmentMethod()
+        {
+            if (_assignMethodSearched) return;
+            _assignMethodSearched = true;
+            var utilsType = typeof(CustomRoleUtils);
+            if (utilsType != null) _assignRoleMethod = utilsType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
+            if (_assignRoleMethod == null) {
+                var mgrType = typeof(CustomRoleManager);
+                if (mgrType != null) _assignRoleMethod = mgrType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
+            }
+        }
+
         private void AssignRealRole(PlayerControl player, string roleName)
         {
-            // Znajdź rolę
             var allRoles = CustomRoleManager.AllRoles;
             ICustomRole roleToAssign = null;
             
             foreach(var roleObj in allRoles) 
             {
-                if (roleObj is ICustomRole iRole)
-                {
-                    if (iRole.ToString() == roleName) // Używamy ToString() dla bezpieczeństwa
-                    {
+                if (roleObj is ICustomRole iRole) {
+                    // NAPRAWA CS1061: Usunięto iRole.Name, używamy tylko ToString()
+                    if (iRole.ToString() == roleName) {
                         roleToAssign = iRole;
                         break;
                     }
                 }
             }
 
-            if (roleToAssign != null)
+            if (roleToAssign != null && _assignRoleMethod != null)
             {
-                // UŻYWAMY ZNALEZIONEJ METODY (REFLEKSJA)
-                if (_assignRoleMethod != null)
-                {
-                    try 
-                    {
-                        // Wywołanie: Metoda(player, role)
-                        _assignRoleMethod.Invoke(null, new object[] { player, roleToAssign });
-                        Debug.Log($"[Draft] Przypisano {roleName} (Refleksja) dla {player.Data.PlayerName}");
-                    }
-                    catch (System.Exception e)
-                    {
-                        Debug.LogError($"[Draft] Błąd przy wywołaniu metody przypisania: {e.Message}");
-                        // Fallback
-                        SetVanillaFallback(player, roleName);
-                    }
-                }
-                else
-                {
-                    Debug.LogWarning("[Draft] Brak metody przypisania. Używam Vanilla.");
-                    SetVanillaFallback(player, roleName);
-                }
+                try { _assignRoleMethod.Invoke(null, new object[] { player, roleToAssign }); }
+                catch { SetVanillaFallback(player, roleName); }
             }
-            else
-            {
-                SetVanillaFallback(player, roleName);
-            }
+            else SetVanillaFallback(player, roleName);
         }
 
         private void SetVanillaFallback(PlayerControl player, string roleName)
         {
-            if (roleName == "Impostor") player.RpcSetRole(RoleTypes.Impostor);
+            if (roleName.Contains("Impostor")) player.RpcSetRole(RoleTypes.Impostor);
             else player.RpcSetRole(RoleTypes.Crewmate);
         }
 
         public static PlayerControl GetPlayerById(byte id)
         {
-            foreach (var p in PlayerControl.AllPlayerControls)
-                if (p.PlayerId == id) return p;
+            foreach (var p in PlayerControl.AllPlayerControls) if (p.PlayerId == id) return p;
             return null;
         }
 
         public void ApplyRoleFromRpc(byte playerId, string roleName) { }
-        
         public void OnTurnStarted(byte playerId, List<string> options)
         {
-            if (playerId == PlayerControl.LocalPlayer.PlayerId)
-            {
-                if (DraftHud.Instance != null)
-                    DraftHud.Instance.ShowSelection(options);
-            }
+            if (playerId == PlayerControl.LocalPlayer.PlayerId && DraftHud.Instance != null)
+                DraftHud.Instance.ShowSelection(options);
         }
 
         private void SendStartDraftRpc(List<byte> order)
