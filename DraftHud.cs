@@ -14,40 +14,25 @@ namespace TownOfUsDraft
         private GUIStyle _randomButtonStyle;
         private bool _stylesInit = false;
 
-        private void Awake()
-        {
-            Instance = this;
-        }
+        private void Awake() { Instance = this; }
 
-        public void ShowSelection(List<string> options)
-        {
-            _currentOptions = options;
-            ShowHud = true;
-        }
+        public void ShowSelection(List<string> options) { _currentOptions = options; ShowHud = true; }
 
         private void InitStyles()
         {
             if (_stylesInit) return;
             _boxStyle = new GUIStyle(GUI.skin.box);
             _boxStyle.normal.background = Texture2D.whiteTexture;
-
-            _buttonStyle = new GUIStyle(GUI.skin.button);
-            _buttonStyle.fontSize = 20;
+            _buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 20 };
             _buttonStyle.normal.textColor = Color.white;
-            
-            _randomButtonStyle = new GUIStyle(GUI.skin.button);
-            _randomButtonStyle.fontSize = 20;
+            _randomButtonStyle = new GUIStyle(GUI.skin.button) { fontSize = 20, fontStyle = FontStyle.Bold };
             _randomButtonStyle.normal.textColor = Color.cyan;
-            _randomButtonStyle.fontStyle = FontStyle.Bold;
-
             _stylesInit = true;
         }
 
         private void OnGUI()
         {
-            if (!ShowHud) return;
-            // Sprawdź w static managerze czy draft działa
-            if (!DraftManager.IsDraftActive) return;
+            if (!ShowHud || !DraftManager.IsDraftActive) return;
 
             InitStyles();
 
@@ -56,12 +41,12 @@ namespace TownOfUsDraft
             float x = (Screen.width - width) / 2;
             float y = (Screen.height - height) / 2;
 
-            GUI.color = new Color(0, 0, 0, 0.9f);
+            GUI.color = new Color(0, 0, 0, 0.95f);
             GUI.DrawTexture(new Rect(x, y, width, height), Texture2D.whiteTexture);
             GUI.color = Color.white;
 
             GUILayout.BeginArea(new Rect(x, y, width, height));
-            GUILayout.Label("DRAFT: WYBIERZ ROLĘ", _buttonStyle); 
+            GUILayout.Label("DRAFT MODE", _buttonStyle); 
             
             if (_currentOptions.Count > 0)
             {
@@ -70,26 +55,21 @@ namespace TownOfUsDraft
                     if (role == "Random")
                     {
                         GUILayout.Space(15);
-                        if (GUILayout.Button("? LOSOWA ROLA ?", _randomButtonStyle, GUILayout.Height(60)))
-                        {
+                        if (GUILayout.Button("? LOSOWA ROLA ?", _randomButtonStyle, GUILayout.Height(60))) {
                             DraftManager.OnPlayerSelectedRole("Random"); 
                             ShowHud = false;
                         }
                     }
                     else
                     {
-                        if (GUILayout.Button(role, _buttonStyle, GUILayout.Height(50)))
-                        {
+                        if (GUILayout.Button(role, _buttonStyle, GUILayout.Height(50))) {
                             DraftManager.OnPlayerSelectedRole(role); 
                             ShowHud = false; 
                         }
                     }
                 }
             }
-            else
-            {
-                GUILayout.Label("Oczekiwanie na turę...", _buttonStyle);
-            }
+            else { GUILayout.Label("Oczekiwanie...", _buttonStyle); }
             GUILayout.EndArea();
         }
     }

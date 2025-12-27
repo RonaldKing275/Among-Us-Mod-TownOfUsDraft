@@ -8,7 +8,6 @@ using TownOfUsDraft;
 namespace TownOfUsDraft
 {
     [BepInPlugin("TownOfUsDraft", "Town Of Us Draft Mode", "1.0.0")]
-    [BepInDependency("au.avengers.townofusmira", BepInDependency.DependencyFlags.HardDependency)] 
     public class DraftPlugin : BasePlugin
     {
         public static DraftPlugin Instance;
@@ -18,7 +17,7 @@ namespace TownOfUsDraft
         {
             Instance = this;
             
-            // Rejestracja TYLKO HUD (Manager jest statyczny)
+            // Rejestracja HUD (Wymagane)
             ClassInjector.RegisterTypeInIl2Cpp<DraftHud>();
             
             Harmony.PatchAll();
@@ -27,7 +26,7 @@ namespace TownOfUsDraft
             Object.DontDestroyOnLoad(go);
             go.AddComponent<DraftHud>();
             
-            Log.LogInfo("Draft Mode Static Loaded.");
+            Log.LogInfo("Draft Mode (Static) Loaded.");
         }
     }
 }
