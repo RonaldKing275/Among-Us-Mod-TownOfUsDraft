@@ -43,7 +43,7 @@ namespace TownOfUsDraft
             {
                 if (roleObj is ICustomRole iRole)
                 {
-                    // NAPRAWA: ICustomRole nie ma Name, używamy ToString()
+                    // NAPRAWA: Używamy ToString(), interfejs ICustomRole może nie mieć Name
                     string roleName = iRole.ToString();
 
                     if (roleObj is ITownOfUsRole touRole)
@@ -53,7 +53,7 @@ namespace TownOfUsDraft
                     }
                     else
                     {
-                        // Fallback po nazwie
+                        // Fallback
                         if (roleName.Contains("Impostor")) 
                             _cachedRoles[DraftCategory.Impostor].Add(roleName);
                         else 
