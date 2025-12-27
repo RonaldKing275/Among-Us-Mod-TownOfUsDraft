@@ -1,151 +1,79 @@
-using BepInEx;
-using BepInEx.Unity.IL2CPP;
 using UnityEngine;
 using System.Collections.Generic;
-using InnerNet; 
 
 namespace TownOfUsDraft
 {
     public class DraftHud : MonoBehaviour
     {
         public static DraftHud Instance;
-        public static bool IsDraftActive = false;
+        public bool ShowHud = false;
+        private List<string> _currentOptions = new List<string>();
         
-        public static byte ActiveTurnPlayerId = 255; 
-        public static string CategoryTitle = "";
-        public static List<string> MyOptions = new List<string>();
+        private GUIStyle _boxStyle;
+        private GUIStyle _buttonStyle;
+        private bool _stylesInit = false;
 
-        // Timer Hosta
-        public static bool HostTimerActive = false;
-        private float _hostTimer = 0f;
-
-        // WATCHDOG
-        public static float TurnWatchdogTimer = 0f;
-        public static byte CurrentTurnPlayerId = 255;
-        // NOWE POLE: Opcje aktualnego gracza (dla auto-picka)
-        public static List<string> CurrentTurnOptions = new List<string>(); 
-        private const float MAX_TURN_TIME = 20.0f; 
-
-        private bool _wasPaused = false;
-
-        private void Awake() { Instance = this; }
-
-        private void Update()
+        private void Awake()
         {
-            if (HostTimerActive && AmongUsClient.Instance.AmHost)
-            {
-                _hostTimer += Time.unscaledDeltaTime;
-                if (_hostTimer >= 0.5f)
-                {
-                    HostTimerActive = false;
-                    _hostTimer = 0f;
-                    DraftManager.ProcessNextTurn();
-                }
-            }
-
-            if (IsDraftActive && AmongUsClient.Instance.AmHost && !HostTimerActive)
-            {
-                if (CurrentTurnPlayerId != 255)
-                {
-                    TurnWatchdogTimer += Time.unscaledDeltaTime;
-                    if (TurnWatchdogTimer >= MAX_TURN_TIME)
-                    {
-                        DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Auto-pick.");
-                        TurnWatchdogTimer = 0f;
-                        DraftManager.ForceSkipTurn(); // To teraz wylosuje rolę!
-                    }
-                }
-            }
-
-            var state = AmongUsClient.Instance.GameState;
-            if (state == InnerNetClient.GameStates.NotJoined || state == InnerNetClient.GameStates.Ended)
-            {
-                if (IsDraftActive || _wasPaused) ForceUnfreeze();
-                IsDraftActive = false;
-                HostTimerActive = false;
-                return;
-            }
-
-            if (IsDraftActive)
-            {
-                if (Time.timeScale != 0f) { Time.timeScale = 0f; _wasPaused = true; }
-                if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = false;
-            }
-            else if (_wasPaused)
-            {
-                ForceUnfreeze();
-            }
+            Instance = this;
         }
 
-        private void ForceUnfreeze()
+        public void ShowSelection(List<string> options)
         {
-            Time.timeScale = 1f;
-            _wasPaused = false;
-            if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = true;
+            _currentOptions = options;
+            ShowHud = true;
+        }
+
+        private void InitStyles()
+        {
+            if (_stylesInit) return;
+            _boxStyle = new GUIStyle(GUI.skin.box);
+            _boxStyle.normal.background = Texture2D.whiteTexture;
+            _buttonStyle = new GUIStyle(GUI.skin.button);
+            _buttonStyle.fontSize = 20;
+            _buttonStyle.normal.textColor = Color.yellow;
+            _stylesInit = true;
         }
 
         private void OnGUI()
         {
-            if (!IsDraftActive) return;
+            if (!ShowHud) return;
+            if (DraftManager.Instance == null || !DraftManager.Instance.IsDraftActive) return;
 
-            GUI.depth = -9999;
-            GUI.backgroundColor = new Color(0.05f, 0.05f, 0.1f, 0.98f); 
-            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
+            InitStyles();
 
-            if (ActiveTurnPlayerId == 255)
-            {
-                GUIStyle processingStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 32, fontStyle = FontStyle.Bold };
-                processingStyle.normal.textColor = Color.gray;
-                GUI.Label(new Rect(0, Screen.height/2 - 50, Screen.width, 100), "FINALIZACJA DRAFTU...", processingStyle);
-                return;
-            }
+            float width = 600; 
+            float height = 400;
+            float x = (Screen.width - width) / 2;
+            float y = (Screen.height - height) / 2;
 
-            bool isMyTurn = (PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == ActiveTurnPlayerId);
+            GUI.color = new Color(0, 0, 0, 0.9f);
+            GUI.DrawTexture(new Rect(x, y, width, height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            GUILayout.BeginArea(new Rect(x, y, width, height));
+            GUILayout.Label("DRAFT MODE", _buttonStyle); 
             
-            string activeName = "Unknown";
-            foreach(var p in PlayerControl.AllPlayerControls) 
-                if(p.PlayerId == ActiveTurnPlayerId) activeName = p.Data.PlayerName;
-
-            GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
-            titleStyle.normal.textColor = Color.white;
-
-            string timeLeft = "";
-            if (AmongUsClient.Instance.AmHost) 
-                timeLeft = $" ({Mathf.Ceil(MAX_TURN_TIME - TurnWatchdogTimer)}s)";
-
-            if (isMyTurn)
+            if (_currentOptions.Count > 0)
             {
-                GUI.Label(new Rect(0, 50, Screen.width, 50), $"TWOJA TURA: {CategoryTitle}{timeLeft}", titleStyle);
-                
-                float w = 600;
-                float x = (Screen.width - w) / 2;
-                GUIStyle btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 24 };
-
-                if (MyOptions != null)
+                GUILayout.Label("Wybierz swoją rolę:", _buttonStyle);
+                foreach (var role in _currentOptions)
                 {
-                    for(int i=0; i<MyOptions.Count; i++)
+                    if (GUILayout.Button(role, GUILayout.Height(50)))
                     {
-                        string display = MyOptions[i].Replace("Role", "");
-                        if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, btnStyle))
-                        {
-                            DraftManager.OnPlayerSelectedRole(MyOptions[i]);
-                        }
-                    }
-                    GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
-                    if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", btnStyle))
-                    {
-                        DraftManager.OnRandomRoleSelected();
+                        // Wywołanie metody z menedżera
+                        DraftManager.Instance.OnPlayerSelectedRole(role); 
+                        _currentOptions.Clear(); 
+                        ShowHud = false; // Schowaj po wyborze
                     }
                 }
             }
             else
             {
-                GUIStyle waitStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 48, fontStyle = FontStyle.Bold };
-                waitStyle.normal.textColor = Color.yellow;
-                
-                string dots = ""; int t = (int)(Time.unscaledTime * 2) % 4; for(int i=0; i<t; i++) dots += ".";
-                GUI.Label(new Rect(0, Screen.height/2 - 100, Screen.width, 200), $"WYBIERA GRACZ: {activeName}{dots}", waitStyle);
+                GUILayout.Label("Oczekiwanie na innych...", _buttonStyle);
             }
+            
+            GUILayout.EndArea();
         }
     }
 }
