@@ -16,15 +16,12 @@ namespace TownOfUsDraft
         public static DraftManager Instance;
 
         public Queue<byte> TurnQueue = new Queue<byte>();
-        // To trzyma informację, jaką kategorię ma dostać gracz (np. Killing, Support, NeutralEvil)
         public Dictionary<byte, DraftCategory> HostDraftAssignments = new Dictionary<byte, DraftCategory>();
         public Dictionary<byte, string> PendingRoles = new Dictionary<byte, string>();
         public bool IsDraftActive = false;
         
         private MethodInfo _assignRoleMethod;
         private bool _assignMethodSearched = false;
-        
-        // Cache do opcji TOU
         private object _roleOptionsInstance;
         private System.Type _roleOptionsType;
 
@@ -39,11 +36,10 @@ namespace TownOfUsDraft
             if (!AmongUsClient.Instance.AmHost) return;
 
             Debug.Log("[Draft] --- START DRAFTU ---");
-            
             FindAssignmentMethod();
-            LoadTouOptionsRef(); // Ładujemy ustawienia z lobby
+            LoadTouOptionsRef();
 
-            // Inicjalizacja puli ról (tylko włączone w configu!)
+            // KROK 1: Pula ról (tylko włączone > 0%)
             RoleCategorizer.InitializeRoles();
 
             HostDraftAssignments.Clear();
@@ -51,7 +47,6 @@ namespace TownOfUsDraft
             PendingRoles.Clear();
             IsDraftActive = true;
 
-            // --- 1. Lista Graczy ---
             List<PlayerControl> players = PlayerControl.AllPlayerControls.ToArray().ToList();
             players.RemoveAll(p => p.Data.Disconnected || p.Data.IsDead);
             
@@ -60,35 +55,31 @@ namespace TownOfUsDraft
             System.Random rng = new System.Random();
             players = players.OrderBy(x => rng.Next()).ToList();
 
-            // --- 2. Odczyt Configu Gry (Ile jakich ról ma być) ---
+            // KROK 2: Ustawienia Hosta (Liczba ról)
             int impostors = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
             
-            // Pobieramy liczby z ustawień TOU (np. "2 Neutral Benign")
+            // W TOU pola nazywają się zazwyczaj tak:
             int nkCount = GetConfigInt("NeutralKilling");
             int neCount = GetConfigInt("NeutralEvil");
             int nbCount = GetConfigInt("NeutralBenign");
             
-            // Pobieramy limity podkategorii Crewmate (jesli są ustawione w TOU)
-            // Szukamy nazw typu "MaxSupport", "SupportCount" lub po prostu "Support" w sekcji liczb
-            int maxSupport = GetConfigInt("MaxSupport", "SupportCount", "CrewmateSupport"); 
-            int maxInvest = GetConfigInt("MaxInvestigative", "InvestigativeCount", "CrewmateInvestigative");
-            int maxPower = GetConfigInt("MaxPower", "PowerCount", "CrewmatePower");
-            int maxKilling = GetConfigInt("MaxKilling", "KillingCount", "CrewmateKilling");
-            int maxProtective = GetConfigInt("MaxProtective", "ProtectiveCount", "CrewmateProtective");
+            // Te pola mogą nie istnieć w standardowym TOU (tam jest full random crew),
+            // ale jeśli grasz na wersji z limitami, to zadziała.
+            int maxSupport = GetConfigInt("MaxSupport", "CrewmateSupport"); 
+            int maxInvest = GetConfigInt("MaxInvestigative", "CrewmateInvestigative");
+            int maxPower = GetConfigInt("MaxPower", "CrewmatePower");
+            int maxKilling = GetConfigInt("MaxKilling", "CrewmateKilling");
+            int maxProtective = GetConfigInt("MaxProtective", "CrewmateProtective");
 
             Debug.Log($"[Draft Config] Imp: {impostors}, NK: {nkCount}, NE: {neCount}, NB: {nbCount}");
-            Debug.Log($"[Draft Crew] Supp: {maxSupport}, Invest: {maxInvest}, Pow: {maxPower}, Prot: {maxProtective}");
 
             int assignedCount = 0;
 
-            // A. Przydziel Impostorów
-            for (int i = 0; i < impostors && assignedCount < players.Count; i++)
-            {
-                HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.Impostor;
-                assignedCount++;
+            // Przydział Impostorów
+            for (int i = 0; i < impostors && assignedCount < players.Count; i++) {
+                HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.Impostor; assignedCount++;
             }
-
-            // B. Przydziel Neutrale (NK -> NE -> NB)
+            // Przydział Neutrali
             for (int i = 0; i < nkCount && assignedCount < players.Count; i++) {
                 HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.NeutralKilling; assignedCount++;
             }
@@ -99,14 +90,14 @@ namespace TownOfUsDraft
                 HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.NeutralBenign; assignedCount++;
             }
 
-            // C. Przydziel Crewmates (wg limitów z configu)
+            // Przydział Crewmate
             int currentSupport = 0, currentInvest = 0, currentPower = 0, currentKilling = 0, currentProtective = 0;
 
             while (assignedCount < players.Count)
             {
-                DraftCategory cat = DraftCategory.Crewmate; // Domyślna
+                DraftCategory cat = DraftCategory.Crewmate; 
 
-                // Próbujemy wpasować w konkretne podkategorie, jeśli Config na to pozwala
+                // Jeśli config zwrócił 0 dla limitów (bo ich nie ma w TOU), warunki będą false i wpadniemy w else -> Random
                 if (currentSupport < maxSupport) { cat = DraftCategory.Support; currentSupport++; }
                 else if (currentInvest < maxInvest) { cat = DraftCategory.Investigative; currentInvest++; }
                 else if (currentPower < maxPower) { cat = DraftCategory.Power; currentPower++; }
@@ -114,7 +105,6 @@ namespace TownOfUsDraft
                 else if (currentProtective < maxProtective) { cat = DraftCategory.Protective; currentProtective++; }
                 else 
                 {
-                    // Jeśli limity wyczerpane, dajemy losową podkategorię Crewmate (fallback)
                     cat = RoleCategorizer.GetRandomCrewmateCategory();
                 }
 
@@ -122,32 +112,25 @@ namespace TownOfUsDraft
                 assignedCount++;
             }
 
-            // --- 3. Kolejka ---
-            foreach(var p in players)
-            {
-                TurnQueue.Enqueue(p.PlayerId);
-            }
+            // KROK 3: Kolejka
+            foreach(var p in players) TurnQueue.Enqueue(p.PlayerId);
 
             SendStartDraftRpc(players.Select(p => p.PlayerId).ToList());
             ProcessNextTurn();
         }
 
-        // --- REFLEKSJA DO ODCZYTU OPCJI ---
         private void LoadTouOptionsRef()
         {
             try {
-                // Szukamy klasy RoleOptions w bibliotece TownOfUsMira
                 var type = System.Type.GetType("TownOfUs.Options.RoleOptions, TownOfUsMira");
                 if (type != null) {
                     _roleOptionsType = type;
-                    // Pobieramy Singleton Instance
                     var singleton = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
                     if (singleton != null) _roleOptionsInstance = singleton.GetValue(null);
                 }
-            } catch (System.Exception e) { Debug.LogError("[Draft] Błąd ładowania opcji TOU: " + e.Message); }
+            } catch (System.Exception e) { Debug.LogError("[Draft] LoadOpts Error: " + e.Message); }
         }
 
-        // Helper szukający wartości liczbowej w configu po kilku możliwych nazwach
         private int GetConfigInt(params string[] fieldNames)
         {
             if (_roleOptionsInstance == null || _roleOptionsType == null) return 0;
@@ -155,22 +138,20 @@ namespace TownOfUsDraft
             foreach (var name in fieldNames)
             {
                 try {
-                    // Szukamy pola lub właściwości o danej nazwie
-                    var field = _roleOptionsType.GetField(name);
+                    // Szukamy Property (TOU używa Properties dla opcji)
+                    var prop = _roleOptionsType.GetProperty(name);
                     object optionObj = null;
-                    
-                    if (field != null) optionObj = field.GetValue(_roleOptionsInstance);
+                    if (prop != null) optionObj = prop.GetValue(_roleOptionsInstance);
                     else {
-                        var prop = _roleOptionsType.GetProperty(name);
-                        if (prop != null) optionObj = prop.GetValue(_roleOptionsInstance);
+                        var field = _roleOptionsType.GetField(name);
+                        if (field != null) optionObj = field.GetValue(_roleOptionsInstance);
                     }
 
                     if (optionObj != null) {
-                        // To jest obiekt typu ModdedNumberOption. Szukamy jego pola "Value".
+                        // ModdedNumberOption ma property Value
                         var valProp = optionObj.GetType().GetProperty("Value");
                         if (valProp != null) {
-                            float fVal = (float)valProp.GetValue(optionObj);
-                            return (int)fVal;
+                            return (int)((float)valProp.GetValue(optionObj));
                         }
                     }
                 } catch {}
@@ -187,13 +168,10 @@ namespace TownOfUsDraft
 
             if (player == null || player.Data.Disconnected) { ProcessNextTurn(); return; }
 
-            // Pobierz kategorię, którą przydzieliliśmy temu graczowi na podstawie Configu
             DraftCategory cat = HostDraftAssignments.ContainsKey(currentPlayerId) ? HostDraftAssignments[currentPlayerId] : DraftCategory.Crewmate;
 
-            // 1. Pobierz 3 role z tej kategorii (tylko włączone!)
+            // Pobierz 3 role + Random (tylko włączone w configu)
             List<string> options = RoleCategorizer.GetRandomRoles(cat, 3);
-            
-            // 2. Dodaj przycisk "Random" jako czwartą opcję
             options.Add("Random");
 
             SendTurnRpc(currentPlayerId, options);
@@ -214,21 +192,14 @@ namespace TownOfUsDraft
             Debug.Log($"[Draft] Gracz {playerId} wybrał: {selectedOption}");
             string finalRoleName = selectedOption;
 
-            // --- LOGIKA PRZYCISKU RANDOM ---
             if (selectedOption == "Random")
             {
                 if (HostDraftAssignments.ContainsKey(playerId))
                 {
-                    DraftCategory assignedCat = HostDraftAssignments[playerId];
-                    Debug.Log($"[Draft] Random dla kategorii: {assignedCat}");
-                    
-                    // Losuj 1 rolę z tej konkretnej kategorii (np. Crewmate Killing)
-                    var oneRandom = RoleCategorizer.GetRandomRoles(assignedCat, 1);
+                    // Losuj z przydzielonej kategorii
+                    var oneRandom = RoleCategorizer.GetRandomRoles(HostDraftAssignments[playerId], 1);
                     if (oneRandom.Count > 0) finalRoleName = oneRandom[0];
-                    else {
-                        // Fallback, jeśli kategoria jest pusta
-                        finalRoleName = (assignedCat == DraftCategory.Impostor) ? "Impostor" : "Crewmate";
-                    }
+                    else finalRoleName = (HostDraftAssignments[playerId] == DraftCategory.Impostor) ? "Impostor" : "Crewmate";
                 }
             }
 
@@ -253,7 +224,6 @@ namespace TownOfUsDraft
         {
             if (_assignMethodSearched) return;
             _assignMethodSearched = true;
-            // Szukamy metody SetRole w CustomRoleUtils lub CustomRoleManager
             var utilsType = typeof(CustomRoleUtils);
             if (utilsType != null) _assignRoleMethod = utilsType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
             if (_assignRoleMethod == null) {
@@ -270,7 +240,6 @@ namespace TownOfUsDraft
             foreach(var roleObj in allRoles) 
             {
                 if (roleObj is ICustomRole iRole) {
-                    // NAPRAWA BŁĘDU: Używamy ToString(), bo interfejs nie ma Name
                     if (iRole.ToString() == roleName) {
                         roleToAssign = iRole;
                         break;
