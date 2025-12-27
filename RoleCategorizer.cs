@@ -1,119 +1,90 @@
 using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+using MiraAPI.Roles;
+using TownOfUs.Roles;
 
 namespace TownOfUsDraft
 {
-    public enum RoleCategory
-    {
-        RandomImp,
-        CrewInvestigative,
-        CrewKilling,
-        CrewProtective,
-        NeutralEvil,
-        NeutralKilling,
-        NeutralBenign,
-        CrewSupport,
-        CrewPower,
-        Unknown
-    }
+    public enum DraftCategory { Crewmate, Support, Investigative, Killing, Power, Protective, Impostor, NeutralBenign, NeutralEvil, NeutralKilling, Unknown }
 
     public static class RoleCategorizer
     {
-        private static Dictionary<string, RoleCategory> RoleMap = new Dictionary<string, RoleCategory>()
+        private static Dictionary<DraftCategory, List<string>> _cachedRoles;
+
+        public static List<string> GetRandomRoles(DraftCategory category, int count)
         {
-            // --- IMPOSTORS ---
-            { "ImpostorRole", RoleCategory.RandomImp },
-            { "AssassinRole", RoleCategory.RandomImp },
-            { "NinjaRole", RoleCategory.RandomImp },
-            { "PoisonerRole", RoleCategory.RandomImp },
-            { "ChameleonRole", RoleCategory.RandomImp },
-            { "GrenadierRole", RoleCategory.RandomImp },
-            { "MorphlingRole", RoleCategory.RandomImp },
-            { "CamouflagerRole", RoleCategory.RandomImp },
-            { "SwooperRole", RoleCategory.RandomImp },
-            { "UndertakerRole", RoleCategory.RandomImp },
-            { "JanitorRole", RoleCategory.RandomImp },
-            { "MinerRole", RoleCategory.RandomImp },
-            { "ConsigliereRole", RoleCategory.RandomImp },
-            { "BlackmailerRole", RoleCategory.RandomImp },
-            { "WarlockRole", RoleCategory.RandomImp },
-            { "VampireRole", RoleCategory.RandomImp }, 
-            // { "TraitorRole", RoleCategory.RandomImp }, // USUNIĘTO - Rola wtórna
+            if (_cachedRoles == null) InitializeRoles();
+            if (!_cachedRoles.ContainsKey(category)) return new List<string>();
 
-            // --- CREW INVESTIGATIVE ---
-            { "SeerRole", RoleCategory.CrewInvestigative },
-            { "SpyRole", RoleCategory.CrewInvestigative },
-            { "SnitchRole", RoleCategory.CrewInvestigative },
-            { "TrackerRole", RoleCategory.CrewInvestigative },
-            { "DetectiveRole", RoleCategory.CrewInvestigative },
-            { "CoronerRole", RoleCategory.CrewInvestigative },
-            { "LookoutRole", RoleCategory.CrewInvestigative },
-            { "InvestigatorRole", RoleCategory.CrewInvestigative },
-            { "PsychicRole", RoleCategory.CrewInvestigative },
-            { "MorticianRole", RoleCategory.CrewInvestigative },
+            List<string> available = new List<string>(_cachedRoles[category]);
+            List<string> picked = new List<string>();
 
-            // --- CREW KILLING ---
-            { "SheriffRole", RoleCategory.CrewKilling },
-            { "VeteranRole", RoleCategory.CrewKilling },
-            { "VigilanteRole", RoleCategory.CrewKilling },
-            { "HunterRole", RoleCategory.CrewKilling },
-
-            // --- CREW PROTECTIVE ---
-            { "MedicRole", RoleCategory.CrewProtective },
-            { "WardenRole", RoleCategory.CrewProtective },
-            { "GuardianAngelRole", RoleCategory.CrewProtective },
-
-            // --- CREW SUPPORT ---
-            { "EngineerRole", RoleCategory.CrewSupport },
-            { "TransporterRole", RoleCategory.CrewSupport },
-            { "PlumberRole", RoleCategory.CrewSupport },
-            { "AltruistRole", RoleCategory.CrewSupport },
-            { "MayorRole", RoleCategory.CrewSupport }, 
-            { "MechanicRole", RoleCategory.CrewSupport },
-            { "TimeMasterRole", RoleCategory.CrewSupport },
-
-             // --- CREW POWER ---
-            { "PoliticianRole", RoleCategory.CrewPower },
-            { "LocksmithRole", RoleCategory.CrewPower },
-            { "DictatorRole", RoleCategory.CrewPower },
-
-            // --- NEUTRAL EVIL ---
-            { "JesterRole", RoleCategory.NeutralEvil },
-            { "ExecutionerRole", RoleCategory.NeutralEvil },
-            { "DoomsayerRole", RoleCategory.NeutralEvil },
-
-            // --- NEUTRAL KILLING ---
-            { "ArsonistRole", RoleCategory.NeutralKilling },
-            { "PlaguebearerRole", RoleCategory.NeutralKilling },
-            { "PestilenceRole", RoleCategory.NeutralKilling },
-            { "WerewolfRole", RoleCategory.NeutralKilling },
-            { "TheGlitchRole", RoleCategory.NeutralKilling },
-            { "JuggernautRole", RoleCategory.NeutralKilling },
-            { "SerialKillerRole", RoleCategory.NeutralKilling },
-
-            // --- NEUTRAL BENIGN ---
-            { "AmnesiacRole", RoleCategory.NeutralBenign },
-            { "SurvivorRole", RoleCategory.NeutralBenign },
-            { "LawyerRole", RoleCategory.NeutralBenign },
-            { "PigeonRole", RoleCategory.NeutralBenign },
-        };
-
-        public static RoleCategory GetCategory(string roleName)
-        {
-            if (RoleMap.ContainsKey(roleName)) return RoleMap[roleName];
-            return RoleCategory.Unknown;
+            for (int i = 0; i < count; i++)
+            {
+                if (available.Count == 0) break;
+                int idx = Random.Range(0, available.Count);
+                picked.Add(available[idx]);
+            }
+            return picked;
         }
 
-        public static List<string> GetRolesInCategory(RoleCategory category, List<string> availableRoles)
+        private static void InitializeRoles()
         {
-            List<string> result = new List<string>();
-            foreach (var role in availableRoles)
+            _cachedRoles = new Dictionary<DraftCategory, List<string>>();
+            foreach (DraftCategory cat in System.Enum.GetValues(typeof(DraftCategory))) _cachedRoles[cat] = new List<string>();
+
+            Debug.Log("[Draft] Inicjalizacja kategoryzacji...");
+
+            // AllRoles jest statyczne w CustomRoleManager
+            var allRoles = CustomRoleManager.AllRoles; 
+
+            foreach (var roleObj in allRoles)
             {
-                if (GetCategory(role) == category)
+                if (roleObj is ICustomRole iRole)
                 {
-                    result.Add(role);
+                    // NAPRAWA: ICustomRole nie ma Name, używamy ToString()
+                    string roleName = iRole.ToString();
+
+                    if (roleObj is ITownOfUsRole touRole)
+                    {
+                        DraftCategory cat = MapTouAlignment(touRole.RoleAlignment);
+                        _cachedRoles[cat].Add(roleName);
+                    }
+                    else
+                    {
+                        // Fallback po nazwie
+                        if (roleName.Contains("Impostor")) 
+                            _cachedRoles[DraftCategory.Impostor].Add(roleName);
+                        else 
+                            _cachedRoles[DraftCategory.Crewmate].Add(roleName);
+                    }
                 }
             }
-            return result;
+            
+            // Fallbacki
+            if (!_cachedRoles[DraftCategory.Crewmate].Contains("Crewmate")) _cachedRoles[DraftCategory.Crewmate].Add("Crewmate");
+            if (!_cachedRoles[DraftCategory.Impostor].Contains("Impostor")) _cachedRoles[DraftCategory.Impostor].Add("Impostor");
+        }
+
+        private static DraftCategory MapTouAlignment(RoleAlignment alignment)
+        {
+            switch (alignment)
+            {
+                case RoleAlignment.CrewmateSupport: return DraftCategory.Support;
+                case RoleAlignment.CrewmateInvestigative: return DraftCategory.Investigative;
+                case RoleAlignment.CrewmateKilling: return DraftCategory.Killing;
+                case RoleAlignment.CrewmatePower: return DraftCategory.Power;
+                case RoleAlignment.CrewmateProtective: return DraftCategory.Protective;
+                case RoleAlignment.ImpostorKilling: return DraftCategory.Impostor;
+                case RoleAlignment.ImpostorConcealing: return DraftCategory.Impostor;
+                case RoleAlignment.ImpostorSupport: return DraftCategory.Impostor;
+                case RoleAlignment.ImpostorPower: return DraftCategory.Impostor;
+                case RoleAlignment.NeutralBenign: return DraftCategory.NeutralBenign;
+                case RoleAlignment.NeutralEvil: return DraftCategory.NeutralEvil;
+                case RoleAlignment.NeutralKilling: return DraftCategory.NeutralKilling;
+                default: return DraftCategory.Crewmate;
+            }
         }
     }
 }
