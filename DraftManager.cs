@@ -16,6 +16,7 @@ namespace TownOfUsDraft
         public static DraftManager Instance;
 
         public Queue<byte> TurnQueue = new Queue<byte>();
+        // To trzyma informację, jaką kategorię ma dostać gracz (np. Killing, Support, NeutralEvil)
         public Dictionary<byte, DraftCategory> HostDraftAssignments = new Dictionary<byte, DraftCategory>();
         public Dictionary<byte, string> PendingRoles = new Dictionary<byte, string>();
         public bool IsDraftActive = false;
@@ -23,7 +24,7 @@ namespace TownOfUsDraft
         private MethodInfo _assignRoleMethod;
         private bool _assignMethodSearched = false;
         
-        // Cache do opcji TOU (zeby nie szukac co chwile)
+        // Cache do opcji TOU
         private object _roleOptionsInstance;
         private System.Type _roleOptionsType;
 
@@ -40,7 +41,7 @@ namespace TownOfUsDraft
             Debug.Log("[Draft] --- START DRAFTU ---");
             
             FindAssignmentMethod();
-            LoadTouOptionsRef(); // Załaduj config TOU do pamięci
+            LoadTouOptionsRef(); // Ładujemy ustawienia z lobby
 
             // Inicjalizacja puli ról (tylko włączone w configu!)
             RoleCategorizer.InitializeRoles();
@@ -50,7 +51,7 @@ namespace TownOfUsDraft
             PendingRoles.Clear();
             IsDraftActive = true;
 
-            // --- 1. Gracze ---
+            // --- 1. Lista Graczy ---
             List<PlayerControl> players = PlayerControl.AllPlayerControls.ToArray().ToList();
             players.RemoveAll(p => p.Data.Disconnected || p.Data.IsDead);
             
@@ -59,21 +60,24 @@ namespace TownOfUsDraft
             System.Random rng = new System.Random();
             players = players.OrderBy(x => rng.Next()).ToList();
 
-            // --- 2. Odczyt Configu Gry ---
-            // Pobieramy limity z ustawień TOU
+            // --- 2. Odczyt Configu Gry (Ile jakich ról ma być) ---
             int impostors = GameOptionsManager.Instance.CurrentGameOptions.NumImpostors;
             
+            // Pobieramy liczby z ustawień TOU (np. "2 Neutral Benign")
             int nkCount = GetConfigInt("NeutralKilling");
             int neCount = GetConfigInt("NeutralEvil");
             int nbCount = GetConfigInt("NeutralBenign");
             
-            // Opcjonalne limity Crewmate (jesli TOU je ma)
-            int maxSupport = GetConfigInt("MaxSupport"); 
-            int maxInvest = GetConfigInt("MaxInvestigative");
-            int maxPower = GetConfigInt("MaxPower");
-            int maxKilling = GetConfigInt("MaxKilling"); // Np. Sheriff/Veteran
+            // Pobieramy limity podkategorii Crewmate (jesli są ustawione w TOU)
+            // Szukamy nazw typu "MaxSupport", "SupportCount" lub po prostu "Support" w sekcji liczb
+            int maxSupport = GetConfigInt("MaxSupport", "SupportCount", "CrewmateSupport"); 
+            int maxInvest = GetConfigInt("MaxInvestigative", "InvestigativeCount", "CrewmateInvestigative");
+            int maxPower = GetConfigInt("MaxPower", "PowerCount", "CrewmatePower");
+            int maxKilling = GetConfigInt("MaxKilling", "KillingCount", "CrewmateKilling");
+            int maxProtective = GetConfigInt("MaxProtective", "ProtectiveCount", "CrewmateProtective");
 
             Debug.Log($"[Draft Config] Imp: {impostors}, NK: {nkCount}, NE: {neCount}, NB: {nbCount}");
+            Debug.Log($"[Draft Crew] Supp: {maxSupport}, Invest: {maxInvest}, Pow: {maxPower}, Prot: {maxProtective}");
 
             int assignedCount = 0;
 
@@ -95,22 +99,22 @@ namespace TownOfUsDraft
                 HostDraftAssignments[players[assignedCount].PlayerId] = DraftCategory.NeutralBenign; assignedCount++;
             }
 
-            // C. Przydziel Crewmates (wg limitów lub losowo)
-            // Używamy prostego licznika ile już przydzieliliśmy konkretnych podkategorii
-            int currentSupport = 0, currentInvest = 0, currentPower = 0, currentKilling = 0;
+            // C. Przydziel Crewmates (wg limitów z configu)
+            int currentSupport = 0, currentInvest = 0, currentPower = 0, currentKilling = 0, currentProtective = 0;
 
             while (assignedCount < players.Count)
             {
-                DraftCategory cat = DraftCategory.Crewmate;
+                DraftCategory cat = DraftCategory.Crewmate; // Domyślna
 
-                // Próba wpasowania w konkretne podkategorie jeśli są włączone
+                // Próbujemy wpasować w konkretne podkategorie, jeśli Config na to pozwala
                 if (currentSupport < maxSupport) { cat = DraftCategory.Support; currentSupport++; }
                 else if (currentInvest < maxInvest) { cat = DraftCategory.Investigative; currentInvest++; }
                 else if (currentPower < maxPower) { cat = DraftCategory.Power; currentPower++; }
                 else if (currentKilling < maxKilling) { cat = DraftCategory.Killing; currentKilling++; }
+                else if (currentProtective < maxProtective) { cat = DraftCategory.Protective; currentProtective++; }
                 else 
                 {
-                    // Jak limity wyczerpane albo ich nie ma, daj losową podkategorię Crewmate
+                    // Jeśli limity wyczerpane, dajemy losową podkategorię Crewmate (fallback)
                     cat = RoleCategorizer.GetRandomCrewmateCategory();
                 }
 
@@ -128,44 +132,50 @@ namespace TownOfUsDraft
             ProcessNextTurn();
         }
 
-        // --- REFLEKSJA DO CONFIGU ---
+        // --- REFLEKSJA DO ODCZYTU OPCJI ---
         private void LoadTouOptionsRef()
         {
             try {
-                // Próbujemy znaleźć Singleton opcji
+                // Szukamy klasy RoleOptions w bibliotece TownOfUsMira
                 var type = System.Type.GetType("TownOfUs.Options.RoleOptions, TownOfUsMira");
                 if (type != null) {
                     _roleOptionsType = type;
+                    // Pobieramy Singleton Instance
                     var singleton = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
                     if (singleton != null) _roleOptionsInstance = singleton.GetValue(null);
                 }
             } catch (System.Exception e) { Debug.LogError("[Draft] Błąd ładowania opcji TOU: " + e.Message); }
         }
 
-        private int GetConfigInt(string fieldName)
+        // Helper szukający wartości liczbowej w configu po kilku możliwych nazwach
+        private int GetConfigInt(params string[] fieldNames)
         {
             if (_roleOptionsInstance == null || _roleOptionsType == null) return 0;
-            try {
-                // Szukamy pola/właściwości o nazwie np. NeutralKilling
-                var field = _roleOptionsType.GetField(fieldName);
-                object optionObj = null;
-                
-                if (field != null) optionObj = field.GetValue(_roleOptionsInstance);
-                else {
-                    var prop = _roleOptionsType.GetProperty(fieldName);
-                    if (prop != null) optionObj = prop.GetValue(_roleOptionsInstance);
-                }
-
-                if (optionObj != null) {
-                    // To jest obiekt typu ModdedNumberOption lub podobny. Szukamy pola .Value
-                    var valProp = optionObj.GetType().GetProperty("Value");
-                    if (valProp != null) {
-                        float fVal = (float)valProp.GetValue(optionObj);
-                        return (int)fVal;
+            
+            foreach (var name in fieldNames)
+            {
+                try {
+                    // Szukamy pola lub właściwości o danej nazwie
+                    var field = _roleOptionsType.GetField(name);
+                    object optionObj = null;
+                    
+                    if (field != null) optionObj = field.GetValue(_roleOptionsInstance);
+                    else {
+                        var prop = _roleOptionsType.GetProperty(name);
+                        if (prop != null) optionObj = prop.GetValue(_roleOptionsInstance);
                     }
-                }
-            } catch {}
-            return 0; // Domyślnie 0 jeśli nie znajdzie
+
+                    if (optionObj != null) {
+                        // To jest obiekt typu ModdedNumberOption. Szukamy jego pola "Value".
+                        var valProp = optionObj.GetType().GetProperty("Value");
+                        if (valProp != null) {
+                            float fVal = (float)valProp.GetValue(optionObj);
+                            return (int)fVal;
+                        }
+                    }
+                } catch {}
+            }
+            return 0; 
         }
 
         public void ProcessNextTurn()
@@ -177,11 +187,14 @@ namespace TownOfUsDraft
 
             if (player == null || player.Data.Disconnected) { ProcessNextTurn(); return; }
 
+            // Pobierz kategorię, którą przydzieliliśmy temu graczowi na podstawie Configu
             DraftCategory cat = HostDraftAssignments.ContainsKey(currentPlayerId) ? HostDraftAssignments[currentPlayerId] : DraftCategory.Crewmate;
 
-            // 1. Pobierz 3 role z kategorii (tylko te włączone w configu, bo RoleCategorizer już je przefiltrował)
+            // 1. Pobierz 3 role z tej kategorii (tylko włączone!)
             List<string> options = RoleCategorizer.GetRandomRoles(cat, 3);
-            options.Add("Random"); // 4. Przycisk
+            
+            // 2. Dodaj przycisk "Random" jako czwartą opcję
+            options.Add("Random");
 
             SendTurnRpc(currentPlayerId, options);
         }
@@ -201,13 +214,21 @@ namespace TownOfUsDraft
             Debug.Log($"[Draft] Gracz {playerId} wybrał: {selectedOption}");
             string finalRoleName = selectedOption;
 
+            // --- LOGIKA PRZYCISKU RANDOM ---
             if (selectedOption == "Random")
             {
                 if (HostDraftAssignments.ContainsKey(playerId))
                 {
-                    // Losuj z przydzielonej kategorii
-                    var oneRandom = RoleCategorizer.GetRandomRoles(HostDraftAssignments[playerId], 1);
+                    DraftCategory assignedCat = HostDraftAssignments[playerId];
+                    Debug.Log($"[Draft] Random dla kategorii: {assignedCat}");
+                    
+                    // Losuj 1 rolę z tej konkretnej kategorii (np. Crewmate Killing)
+                    var oneRandom = RoleCategorizer.GetRandomRoles(assignedCat, 1);
                     if (oneRandom.Count > 0) finalRoleName = oneRandom[0];
+                    else {
+                        // Fallback, jeśli kategoria jest pusta
+                        finalRoleName = (assignedCat == DraftCategory.Impostor) ? "Impostor" : "Crewmate";
+                    }
                 }
             }
 
@@ -232,6 +253,7 @@ namespace TownOfUsDraft
         {
             if (_assignMethodSearched) return;
             _assignMethodSearched = true;
+            // Szukamy metody SetRole w CustomRoleUtils lub CustomRoleManager
             var utilsType = typeof(CustomRoleUtils);
             if (utilsType != null) _assignRoleMethod = utilsType.GetMethod("SetRole", BindingFlags.Public | BindingFlags.Static);
             if (_assignRoleMethod == null) {
@@ -248,7 +270,7 @@ namespace TownOfUsDraft
             foreach(var roleObj in allRoles) 
             {
                 if (roleObj is ICustomRole iRole) {
-                    // NAPRAWA CS1061: Usunięto iRole.Name, używamy tylko ToString()
+                    // NAPRAWA BŁĘDU: Używamy ToString(), bo interfejs nie ma Name
                     if (iRole.ToString() == roleName) {
                         roleToAssign = iRole;
                         break;

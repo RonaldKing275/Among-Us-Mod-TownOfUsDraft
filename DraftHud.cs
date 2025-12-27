@@ -11,7 +11,7 @@ namespace TownOfUsDraft
         
         private GUIStyle _boxStyle;
         private GUIStyle _buttonStyle;
-        private GUIStyle _randomButtonStyle; // Styl dla przycisku Random
+        private GUIStyle _randomButtonStyle;
         private bool _stylesInit = false;
 
         private void Awake()
@@ -37,7 +37,7 @@ namespace TownOfUsDraft
             
             _randomButtonStyle = new GUIStyle(GUI.skin.button);
             _randomButtonStyle.fontSize = 20;
-            _randomButtonStyle.normal.textColor = Color.cyan; // Wyróżniony kolor
+            _randomButtonStyle.normal.textColor = Color.cyan;
             _randomButtonStyle.fontStyle = FontStyle.Bold;
 
             _stylesInit = true;
@@ -51,7 +51,7 @@ namespace TownOfUsDraft
             InitStyles();
 
             float width = 600; 
-            float height = 500; // Trochę wyższe bo 4 przyciski
+            float height = 500;
             float x = (Screen.width - width) / 2;
             float y = (Screen.height - height) / 2;
 
@@ -60,17 +60,16 @@ namespace TownOfUsDraft
             GUI.color = Color.white;
 
             GUILayout.BeginArea(new Rect(x, y, width, height));
-            GUILayout.Label("WYBIERZ SWOJĄ ROLĘ", _buttonStyle); 
+            GUILayout.Label("DRAFT: WYBIERZ ROLĘ", _buttonStyle); 
             
             if (_currentOptions.Count > 0)
             {
                 foreach (var role in _currentOptions)
                 {
-                    // Specjalna obsługa przycisku Random
                     if (role == "Random")
                     {
-                        GUILayout.Space(10);
-                        if (GUILayout.Button("??? LOSOWA ROLA Z KATEGORII ???", _randomButtonStyle, GUILayout.Height(60)))
+                        GUILayout.Space(15);
+                        if (GUILayout.Button("? LOSOWA ROLA (Z TWOJEJ KATEGORII) ?", _randomButtonStyle, GUILayout.Height(60)))
                         {
                             DraftManager.Instance.OnPlayerSelectedRole("Random"); 
                             ShowHud = false;
