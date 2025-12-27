@@ -46,7 +46,8 @@ namespace TownOfUsDraft
         private void OnGUI()
         {
             if (!ShowHud) return;
-            if (DraftManager.Instance == null || !DraftManager.Instance.IsDraftActive) return;
+            // Sprawdź w static managerze czy draft działa
+            if (!DraftManager.IsDraftActive) return;
 
             InitStyles();
 
@@ -69,9 +70,9 @@ namespace TownOfUsDraft
                     if (role == "Random")
                     {
                         GUILayout.Space(15);
-                        if (GUILayout.Button("? LOSOWA ROLA (Z TWOJEJ KATEGORII) ?", _randomButtonStyle, GUILayout.Height(60)))
+                        if (GUILayout.Button("? LOSOWA ROLA ?", _randomButtonStyle, GUILayout.Height(60)))
                         {
-                            DraftManager.Instance.OnPlayerSelectedRole("Random"); 
+                            DraftManager.OnPlayerSelectedRole("Random"); 
                             ShowHud = false;
                         }
                     }
@@ -79,7 +80,7 @@ namespace TownOfUsDraft
                     {
                         if (GUILayout.Button(role, _buttonStyle, GUILayout.Height(50)))
                         {
-                            DraftManager.Instance.OnPlayerSelectedRole(role); 
+                            DraftManager.OnPlayerSelectedRole(role); 
                             ShowHud = false; 
                         }
                     }
@@ -89,7 +90,6 @@ namespace TownOfUsDraft
             {
                 GUILayout.Label("Oczekiwanie na turę...", _buttonStyle);
             }
-            
             GUILayout.EndArea();
         }
     }
