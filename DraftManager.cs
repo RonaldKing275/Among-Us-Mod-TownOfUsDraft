@@ -20,7 +20,6 @@ namespace TownOfUsDraft
         private static HashSet<string> _globalUsedRoles = new HashSet<string>();
         public static Dictionary<byte, RoleTypes> PendingRoles = new Dictionary<byte, RoleTypes>();
 
-        // POPRAWIONY FILTR: Blokujemy nazwy obiektów Unity, a nie nazwy klas
         private static readonly HashSet<string> VanillaBannedRoles = new HashSet<string>
         {
             "Engineer", "Scientist", "Shapeshifter", "Guardian Angel", "GuardianAngel",
@@ -29,8 +28,11 @@ namespace TownOfUsDraft
 
         public static void StartDraft()
         {
-            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (FINAL FIX) ---");
-            LogAllDetectedOptions(); // Debug opcji
+            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (COMPILATION FIX) ---");
+            LogAllDetectedOptions(); 
+
+            // Włączamy blokadę standardowego rozdawania ról
+            TownOfUsDraft.Patches.BlockTouGenerationPatch.BlockGeneration = true;
 
             PendingRoles.Clear();
             _globalUsedRoles.Clear();
@@ -47,7 +49,7 @@ namespace TownOfUsDraft
                 .OrderBy(p => rng.Next())
                 .ToList();
 
-            List<RoleCategory> draftPool = BuildDraftPool(players.Count);
+            List<RoleCategory> draftPool = BuildDraftPool(players.Count, rng);
 
             for (int i = 0; i < players.Count; i++)
             {
@@ -78,13 +80,10 @@ namespace TownOfUsDraft
                 TurnQueue.Dequeue(); 
                 RoleCategory cat = HostDraftAssignments.ContainsKey(nextPlayerId) ? HostDraftAssignments[nextPlayerId] : RoleCategory.CrewSupport;
                 
-                // Generujemy opcje
                 List<string> options = GenerateUniqueOptions(cat, rng);
                 foreach(var op in options) _globalUsedRoles.Add(op);
 
-                // BEZPIECZNIK: Upewnij się, że mamy 3 opcje przed wysłaniem!
-                // Jeśli jest mniej, wypełniamy "pustymi", żeby RPC nie wywaliło błędu
-                while (options.Count < 3) options.Add("Crewmate"); // Fallback do zwykłego
+                while (options.Count < 3) options.Add("Sheriff");
 
                 DraftHud.TurnWatchdogTimer = 0f; 
                 DraftHud.CurrentTurnPlayerId = nextPlayerId;
@@ -105,21 +104,15 @@ namespace TownOfUsDraft
             byte pid = DraftHud.CurrentTurnPlayerId;
             DraftPlugin.Instance.Log.LogWarning($"[Draft Watchdog] Timeout dla gracza {pid}. Auto-pick.");
 
-            string autoRole = "Sheriff"; // Ostateczny fallback
-            
-            // Próbujemy wylosować z opcji przygotowanych dla tego gracza
+            string autoRole = "Sheriff"; 
             if (DraftHud.CurrentTurnOptions != null && DraftHud.CurrentTurnOptions.Count > 0)
             {
-                // Wybieramy pierwszą validną rolę (nie "Crewmate" jeśli to możliwe)
-                var valid = DraftHud.CurrentTurnOptions.Where(r => r != "Crewmate").ToList();
+                var valid = DraftHud.CurrentTurnOptions.Where(r => r != "Crewmate" && r != "Sheriff").ToList();
                 if (valid.Count > 0) autoRole = valid[0];
                 else autoRole = DraftHud.CurrentTurnOptions[0];
             }
-            
             OnPlayerSelectedRole(autoRole, pid);
         }
-
-        // --- RPC HANDLERS ---
 
         public static void OnTurnStarted(byte activePlayerId, string catTitle, List<string> options)
         {
@@ -139,47 +132,161 @@ namespace TownOfUsDraft
 
         private static IEnumerator FinalizeDraftRoutine()
         {
+            DraftPlugin.Instance.Log.LogInfo("[Draft] Czekam na stabilizację gry...");
+            
             Time.timeScale = 1f;
             if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = true;
-            yield return new WaitForSeconds(0.5f);
+
+            TownOfUsDraft.Patches.BlockTouGenerationPatch.BlockGeneration = false;
+
+            yield return new WaitForSeconds(1.5f);
+            
+            int timeout = 0;
+            while ((HudManager.Instance == null || HudManager.Instance.KillButton == null) && timeout < 30)
+            {
+                yield return new WaitForSeconds(0.1f);
+                timeout++;
+            }
+
+            DraftPlugin.Instance.Log.LogInfo($"[Draft] Aplikowanie {PendingRoles.Count} ról.");
 
             foreach (var kvp in PendingRoles)
             {
                 var player = GetPlayerById(kvp.Key);
-                if (player != null)
+                if (player != null && !player.Data.Disconnected && !player.Data.IsDead)
                 {
-                    try { RoleManager.Instance.SetRole(player, kvp.Value); } catch {}
+                    try { RoleManager.Instance.SetRole(player, kvp.Value); } 
+                    catch (System.Exception e) { DraftPlugin.Instance.Log.LogError($"[Draft Apply Error] {e.Message}"); }
                 }
             }
         }
 
+        // --- POPRAWIONY SKANER MIRA API (Bez błędu CS0019) ---
+        private static int GetMiraOption(string keyword)
+        {
+            try 
+            {
+                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
+                
+                if (touAssembly == null) return 0;
+
+                var roleOptsType = touAssembly.GetType("TownOfUs.Options.RoleOptions");
+                if (roleOptsType == null) return 0;
+
+                var fields = roleOptsType.GetFields(BindingFlags.Public | BindingFlags.Static);
+                
+                foreach (var f in fields)
+                {
+                    var val = f.GetValue(null);
+                    if (val == null) continue;
+                    var type = val.GetType();
+
+                    // --- 1. POBIERANIE TYTUŁU (Naprawione) ---
+                    string title = null;
+                    var propTitle = type.GetProperty("Title");
+                    if (propTitle != null) title = propTitle.GetValue(val) as string;
+                    else 
+                    {
+                        var fieldTitle = type.GetField("Title");
+                        if (fieldTitle != null) title = fieldTitle.GetValue(val) as string;
+                    }
+
+                    if (string.IsNullOrEmpty(title)) continue;
+
+                    if (title.ToLower().Contains(keyword.ToLower()))
+                    {
+                        // --- 2. POBIERANIE WARTOŚCI (Naprawione) ---
+                        object rawValue = null;
+                        var propValue = type.GetProperty("Value");
+                        if (propValue != null) rawValue = propValue.GetValue(val);
+                        else
+                        {
+                            var fieldValue = type.GetField("Value");
+                            if (fieldValue != null) rawValue = fieldValue.GetValue(val);
+                        }
+
+                        if (rawValue != null)
+                        {
+                            return (int)System.Convert.ToSingle(rawValue);
+                        }
+                    }
+                }
+            } 
+            catch {}
+            return 0;
+        }
+
+        private static List<RoleCategory> BuildDraftPool(int playerCount, System.Random rng)
+        {
+            List<RoleCategory> pool = new List<RoleCategory>();
+            
+            int imp = (GameOptionsManager.Instance?.CurrentGameOptions?.NumImpostors) ?? 1;
+            for(int i=0; i<imp; i++) pool.Add(RoleCategory.RandomImp);
+
+            int nk = GetMiraOption("Neutral Killing") + GetMiraOption("Neutral Killer");
+            int ne = GetMiraOption("Neutral Evil");
+            int nb = GetMiraOption("Neutral Benign");
+            int no = GetMiraOption("Neutral Outlier") + GetMiraOption("Neutral Chaos");
+            int rndN = GetMiraOption("Random Neutral");
+
+            if (nk==0 && ne==0 && nb==0 && playerCount >= 4) {
+                 DraftPlugin.Instance.Log.LogWarning("[Config] Nie znaleziono Neutrali. Ustawiam 1 NK (Fallback).");
+                 nk = 1; 
+            }
+
+            int cInv = GetMiraOption("Investigative"); if (cInv == 0) cInv = 2;
+            int cPro = GetMiraOption("Protective"); 
+            int cSup = GetMiraOption("Support");       
+            int cPow = GetMiraOption("Power");
+            int cKil = GetMiraOption("Killing"); 
+
+            DraftPlugin.Instance.Log.LogInfo($"[Pool] Imp={imp}, NK={nk}, NE={ne}, NB={nb}");
+
+            for(int i=0; i<nk; i++) pool.Add(RoleCategory.NeutralKilling);
+            for(int i=0; i<ne; i++) pool.Add(RoleCategory.NeutralEvil);
+            for(int i=0; i<nb; i++) pool.Add(RoleCategory.NeutralBenign);
+            for(int i=0; i<rndN; i++) pool.Add(GetRandomNeutralCategory(rng));
+
+            for(int i=0; i<cInv; i++) pool.Add(RoleCategory.CrewInvestigative);
+            for(int i=0; i<cPro; i++) pool.Add(RoleCategory.CrewProtective);
+            for(int i=0; i<cKil; i++) pool.Add(RoleCategory.CrewKilling);
+            for(int i=0; i<cSup; i++) pool.Add(RoleCategory.CrewSupport);
+            for(int i=0; i<cPow; i++) pool.Add(RoleCategory.CrewPower);
+
+            int remaining = playerCount - pool.Count;
+            if (remaining < 0) 
+            {
+                var impTicket = pool[0]; pool.RemoveAt(0); 
+                pool = pool.OrderBy(x => rng.Next()).Take(playerCount - 1).ToList();
+                pool.Insert(0, impTicket);
+            }
+            else 
+            {
+                for(int i=0; i<remaining; i++) pool.Add(GetWeightedCrewCategory(rng));
+            }
+
+            return pool.OrderBy(x => rng.Next()).ToList();
+        }
+
+        // --- Helpery ---
         public static void OnPlayerSelectedRole(string roleName, byte forcedPlayerId = 255)
         {
             byte targetId = (forcedPlayerId == 255) ? PlayerControl.LocalPlayer.PlayerId : forcedPlayerId;
-            
             var player = GetPlayerById(targetId);
             if (player != null)
             {
                 RoleTypes type = RoleTypes.Crewmate;
                 bool found = false;
-                foreach (var r in RoleManager.Instance.AllRoles) 
-                {
+                foreach (var r in RoleManager.Instance.AllRoles) {
                     var uObj = r as UnityEngine.Object;
-                    if (uObj != null && uObj.name == roleName) { 
-                        type = ((RoleBehaviour)r).Role; 
-                        found = true;
-                        break; 
-                    }
+                    if (uObj != null && uObj.name == roleName) { type = ((RoleBehaviour)r).Role; found = true; break; }
                 }
                 
-                // Jeśli nie znaleziono roli po nazwie, szukaj czegokolwiek z TOU (awaryjnie)
-                if (!found)
-                {
+                if (!found) {
                      foreach (var r in RoleManager.Instance.AllRoles) {
                         var uObj = r as UnityEngine.Object;
-                        if (uObj != null && !VanillaBannedRoles.Contains(uObj.name)) {
-                             type = ((RoleBehaviour)r).Role; break;
-                        }
+                        if (uObj != null && !VanillaBannedRoles.Contains(uObj.name)) { type = ((RoleBehaviour)r).Role; break; }
                      }
                 }
 
@@ -191,149 +298,61 @@ namespace TownOfUsDraft
                 if (!PendingRoles.ContainsKey(targetId)) PendingRoles.Add(targetId, type);
                 else PendingRoles[targetId] = type;
                 
-                if (AmongUsClient.Instance.AmHost)
-                {
+                if (AmongUsClient.Instance.AmHost) {
                     DraftHud.HostTimerActive = true; 
                     DraftHud.TurnWatchdogTimer = 0f;
                 }
             }
         }
-
-        public static void ApplyRoleFromRpc(PlayerControl player, RoleTypes type)
-        {
+        
+        public static void ApplyRoleFromRpc(PlayerControl player, RoleTypes type) {
             if (!PendingRoles.ContainsKey(player.PlayerId)) PendingRoles.Add(player.PlayerId, type);
             else PendingRoles[player.PlayerId] = type;
-
-            if (AmongUsClient.Instance.AmHost)
-            {
+            if (AmongUsClient.Instance.AmHost) {
                 DraftHud.HostTimerActive = true; 
                 DraftHud.TurnWatchdogTimer = 0f;
             }
         }
 
-        // --- CONFIG & GENERATION ---
-
-        private static List<RoleCategory> BuildDraftPool(int playerCount)
-        {
-            List<RoleCategory> pool = new List<RoleCategory>();
-            
-            // Impostor (Default 1)
-            int imp = (GameOptionsManager.Instance?.CurrentGameOptions?.NumImpostors) ?? 1;
-            for(int i=0; i<imp; i++) pool.Add(RoleCategory.RandomImp);
-
-            // Pobieranie Configu (z Fallbackiem!)
-            // Jeśli GetSmartOption zwróci 0, używamy wartości domyślnych (np. 1) żebyś mógł grać
-            int nk = GetSmartOption("Neutral Killing") + GetSmartOption("Neutral Killer");
-            if (nk == 0 && playerCount > 4) nk = 1; // Fallback: Zawsze 1 NK przy >4 graczach
-
-            int ne = GetSmartOption("Neutral Evil");
-            if (ne == 0 && playerCount > 6) ne = 1; // Fallback: 1 NE przy >6 graczach
-
-            int nb = GetSmartOption("Neutral Benign");
-            int no = GetSmartOption("Neutral Outlier") + GetSmartOption("Neutral Chaos");
-
-            int cInv = GetSmartOption("Investigative"); if (cInv == 0) cInv = 2; // Default 2
-            int cPro = GetSmartOption("Protective");    if (cPro == 0) cPro = 1; // Default 1
-            int cSup = GetSmartOption("Support");       if (cSup == 0) cSup = 1; // Default 1
-            int cPow = GetSmartOption("Power");
-            int cKil = GetSmartOption("Killing", "Neutral");
-
-            DraftPlugin.Instance.Log.LogInfo($"[Pool] Imp={imp}, NK={nk}, NE={ne}, Inv={cInv}, Pro={cPro}");
-
-            for(int i=0; i<nk+no; i++) pool.Add(RoleCategory.NeutralKilling);
-            for(int i=0; i<ne; i++) pool.Add(RoleCategory.NeutralEvil);
-            for(int i=0; i<nb; i++) pool.Add(RoleCategory.NeutralBenign);
-
-            for(int i=0; i<cInv; i++) pool.Add(RoleCategory.CrewInvestigative);
-            for(int i=0; i<cPro; i++) pool.Add(RoleCategory.CrewProtective);
-            for(int i=0; i<cKil; i++) pool.Add(RoleCategory.CrewKilling);
-            for(int i=0; i<cSup; i++) pool.Add(RoleCategory.CrewSupport);
-            for(int i=0; i<cPow; i++) pool.Add(RoleCategory.CrewPower);
-
-            // Wypełnianie / Docinanie
-            int remaining = playerCount - pool.Count;
-            if (remaining < 0) 
-            {
-                var impTicket = pool[0]; pool.RemoveAt(0);
-                pool = pool.OrderBy(x => new System.Random().Next()).Take(playerCount - 1).ToList();
-                pool.Insert(0, impTicket);
-            }
-            else 
-            {
-                for(int i=0; i<remaining; i++) pool.Add(GetWeightedCrewCategory(new System.Random()));
-            }
-
-            return pool.OrderBy(x => new System.Random().Next()).ToList();
+        private static RoleCategory GetRandomNeutralCategory(System.Random r) {
+            int roll = r.Next(0, 3);
+            if (roll == 0) return RoleCategory.NeutralKilling;
+            if (roll == 1) return RoleCategory.NeutralBenign;
+            return RoleCategory.NeutralEvil;
         }
-
-        private static int GetSmartOption(string keyword, string exclude = null)
-        {
-            try 
-            {
-                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
-                if (touAssembly == null) return 0;
-                var customOptType = touAssembly.GetType("TownOfUs.CustomOption");
-                var optionsField = customOptType?.GetField("options", BindingFlags.Public | BindingFlags.Static);
-                var list = optionsField?.GetValue(null) as IList;
-                if (list == null) return 0;
-
-                foreach (var opt in list)
-                {
-                    var nameProp = opt.GetType().GetField("Name");
-                    if (nameProp == null) continue;
-                    string title = nameProp.GetValue(opt) as string;
-                    if (string.IsNullOrEmpty(title)) continue;
-
-                    if (title.ToLower().Contains(keyword.ToLower()) && (exclude == null || !title.ToLower().Contains(exclude.ToLower())))
-                    {
-                        var valField = opt.GetType().GetField("value") ?? opt.GetType().GetField("Selection");
-                        if (valField != null) return (int)System.Convert.ToSingle(valField.GetValue(opt));
-                    }
-                }
-            }
-            catch {}
-            return 0;
-        }
-
-        // --- HELPERY ---
-        private static List<string> GenerateUniqueOptions(RoleCategory category, System.Random rng)
-        {
+        private static RoleCategory GetWeightedCrewCategory(System.Random r) {
+            int roll = r.Next(0, 100);
+            if (roll < 20) return RoleCategory.CrewInvestigative;
+            if (roll < 40) return RoleCategory.CrewKilling;
+            if (roll < 60) return RoleCategory.CrewProtective;
+            if (roll < 80) return RoleCategory.CrewSupport;
+            return RoleCategory.CrewPower;
+        } 
+        private static List<string> GenerateUniqueOptions(RoleCategory category, System.Random rng) {
             List<string> allRoles = GetAllAvailableRoleNames();
             List<string> categoryRoles = RoleCategorizer.GetRolesInCategory(category, allRoles);
             var available = categoryRoles.Where(r => !_globalUsedRoles.Contains(r)).ToList();
-
-            if (available.Count < 3) available = categoryRoles; // Zezwól na powtórki jeśli mało
-            if (available.Count == 0) available = allRoles.Where(r => !r.Contains("Impostor")).ToList(); // Awaryjnie
-
+            if (available.Count < 3) available = categoryRoles; 
+            if (available.Count == 0) available = allRoles.Where(r => !r.Contains("Impostor")).ToList();
             return available.OrderBy(x => rng.Next()).Take(3).ToList();
         }
-
-        private static List<string> GetAllAvailableRoleNames()
-        {
+        private static List<string> GetAllAvailableRoleNames() {
             List<string> list = new List<string>();
-            foreach (var r in RoleManager.Instance.AllRoles) 
-            { 
+            foreach (var r in RoleManager.Instance.AllRoles) { 
                 var unityObj = r as UnityEngine.Object;
                 if (unityObj == null) continue;
-                string name = unityObj.name;
-                
-                if (name == "Unknown" || name.Contains("Vanilla") || name.Contains("Ghost")) continue;
-                if (VanillaBannedRoles.Contains(name)) continue; 
-                list.Add(name); 
-            }
-            return list;
+                if (!VanillaBannedRoles.Contains(unityObj.name) && !unityObj.name.Contains("Vanilla") && unityObj.name != "Unknown") 
+                    list.Add(unityObj.name); 
+            } return list;
         }
-
         private static PlayerControl GetPlayerById(byte id) { foreach (var p in PlayerControl.AllPlayerControls) if (p.PlayerId == id) return p; return null; }
         private static string FormatCategoryName(RoleCategory c) => c.ToString().Replace("Random","").Replace("Crew","Crewmate ");
-        private static RoleCategory GetWeightedCrewCategory(System.Random r) { return RoleCategory.CrewSupport; } 
         private static void SendStartTurnRpc(byte playerId, string cat, List<string> opts) {
             MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, (byte)251, SendOption.Reliable, -1);
             writer.Write(playerId); writer.Write(cat); 
-            // BEZPIECZNY ZAPIS - zapobiega crashowi przy pustej liście
-            writer.Write(opts.Count > 0 ? opts[0] : "Crewmate"); 
-            writer.Write(opts.Count > 1 ? opts[1] : "Crewmate"); 
-            writer.Write(opts.Count > 2 ? opts[2] : "Crewmate");
+            writer.Write(opts.Count > 0 ? opts[0] : "Sheriff"); 
+            writer.Write(opts.Count > 1 ? opts[1] : "Sheriff"); 
+            writer.Write(opts.Count > 2 ? opts[2] : "Sheriff");
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
         private static void SendRoleSelectedRpc(byte playerId, string roleName) {
@@ -343,47 +362,34 @@ namespace TownOfUsDraft
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
         public static void OnRandomRoleSelected() { if (DraftHud.MyOptions.Count > 0) OnPlayerSelectedRole(DraftHud.MyOptions[new System.Random().Next(DraftHud.MyOptions.Count)]); }
-        
         private static void LogAllDetectedOptions()
         {
-            DraftPlugin.Instance.Log.LogInfo("--- [DEBUG] PEŁNA LISTA OPCJI TOU ---");
-            try 
+            DraftPlugin.Instance.Log.LogInfo("--- [DEBUG] SKANOWANIE OPCJI ---");
+            foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
             {
-                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
-                if (touAssembly != null)
-                {
-                    var customOptType = touAssembly.GetType("TownOfUs.CustomOption");
-                    if (customOptType != null)
+                try {
+                    var type = asm.GetType("TownOfUs.CustomOption");
+                    if (type != null)
                     {
-                        var optionsField = customOptType.GetField("options", BindingFlags.Public | BindingFlags.Static);
-                        if (optionsField != null)
-                        {
-                            var list = optionsField.GetValue(null) as IList;
-                            if (list != null)
-                            {
-                                foreach (var opt in list)
-                                {
-                                    var nameProp = opt.GetType().GetField("Name");
-                                    var valField = opt.GetType().GetField("value") ?? opt.GetType().GetField("Selection");
-                                    
-                                    if (nameProp != null && valField != null)
-                                    {
-                                        string title = nameProp.GetValue(opt) as string;
-                                        var val = valField.GetValue(opt);
-                                        // Wypisz wszystko co ma wartość > 0 lub zawiera "Neutral"
-                                        if (title.Contains("Neutral") || title.Contains("Max") || title.Contains("Count"))
-                                        {
-                                            DraftPlugin.Instance.Log.LogInfo($" -> OPCJA: '{title}' = {val}");
-                                        }
-                                    }
+                        DraftPlugin.Instance.Log.LogInfo($"Znaleziono CustomOption w: {asm.GetName().Name}");
+                        var field = type.GetField("options", BindingFlags.Public | BindingFlags.Static);
+                        var list = field?.GetValue(null) as IList;
+                        if (list != null) {
+                            foreach(var opt in list) {
+                                var nameProp = opt.GetType().GetField("Name");
+                                var valField = opt.GetType().GetField("value") ?? opt.GetType().GetField("Selection");
+                                if (nameProp != null && valField != null) {
+                                    string t = nameProp.GetValue(opt) as string;
+                                    var v = valField.GetValue(opt);
+                                    if (t.Contains("Neutral") || t.Contains("Count")) 
+                                        DraftPlugin.Instance.Log.LogInfo($" -> {t}: {v}");
                                 }
                             }
                         }
                     }
-                }
+                } catch {}
             }
-            catch (System.Exception e) { DraftPlugin.Instance.Log.LogError($"Błąd skanowania: {e}"); }
-            DraftPlugin.Instance.Log.LogInfo("---------------------------------------");
+            DraftPlugin.Instance.Log.LogInfo("--------------------------------");
         }
     }
 }
