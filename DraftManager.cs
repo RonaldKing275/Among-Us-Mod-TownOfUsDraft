@@ -18,7 +18,8 @@ namespace TownOfUsDraft
         public static Queue<byte> TurnQueue = new Queue<byte>();
         public static Dictionary<byte, RoleCategory> HostDraftAssignments = new Dictionary<byte, RoleCategory>();
         private static HashSet<string> _globalUsedRoles = new HashSet<string>();
-        public static Dictionary<byte, string> PendingRoles = new Dictionary<byte, string>();
+        public static Dictionary<byte, RoleTypes> PendingRoles = new Dictionary<byte, RoleTypes>();
+
         private static readonly HashSet<string> VanillaBannedRoles = new HashSet<string>
         {
             "Engineer", "Scientist", "Shapeshifter", "Guardian Angel", "GuardianAngel",
@@ -129,56 +130,33 @@ namespace TownOfUsDraft
             DraftHud.IsDraftActive = true;
         }
 
-        private static System.Collections.IEnumerator FinalizeDraftRoutine()
+        private static IEnumerator FinalizeDraftRoutine()
         {
-            yield return new WaitForSeconds(1f);
+            DraftPlugin.Instance.Log.LogInfo("[Draft] Czekam na stabilizację gry...");
+            
+            Time.timeScale = 1f;
+            if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = true;
+
+            TownOfUsDraft.Patches.BlockTouGenerationPatch.BlockGeneration = false;
+
+            yield return new WaitForSeconds(1.5f);
+            
+            int timeout = 0;
+            while ((HudManager.Instance == null || HudManager.Instance.KillButton == null) && timeout < 30)
+            {
+                yield return new WaitForSeconds(0.1f);
+                timeout++;
+            }
+
+            DraftPlugin.Instance.Log.LogInfo($"[Draft] Aplikowanie {PendingRoles.Count} ról.");
 
             foreach (var kvp in PendingRoles)
             {
-                PlayerControl player = GetPlayerById(kvp.Key);
-                string roleName = kvp.Value;
-
-                if (player == null) continue;
-
-                // 1. OBSŁUGA VANILLA (Naprawia błąd "Missing Object")
-                if (roleName == "Crewmate") 
+                var player = GetPlayerById(kvp.Key);
+                if (player != null && !player.Data.Disconnected && !player.Data.IsDead)
                 {
-                    RoleManager.Instance.SetRole(player, RoleTypes.Crewmate);
-                    continue;
-                }
-                if (roleName == "Impostor") 
-                {
-                    RoleManager.Instance.SetRole(player, RoleTypes.Impostor);
-                    continue;
-                }
-                if (roleName == "Scientist") 
-                {
-                    RoleManager.Instance.SetRole(player, RoleTypes.Scientist);
-                    continue;
-                }
-                if (roleName == "Engineer") 
-                {
-                    RoleManager.Instance.SetRole(player, RoleTypes.Engineer);
-                    continue;
-                }
-                if (roleName == "Sheriff" && RoleCategorizer.GetRoleByName("Sheriff") == null) 
-                {
-                    // Jeśli nie ma moda na Sheriffa, dajemy Vanilla Sheriffa (jeśli gra pozwala)
-                    // lub fallback do Crewmate
-                    RoleManager.Instance.SetRole(player, RoleTypes.Crewmate); 
-                    continue;
-                }
-
-                // 2. OBSŁUGA CUSTOM RÓL (TOU/Mira)
-                ICustomRole customRole = RoleCategorizer.GetRoleByName(roleName);
-                if (customRole != null && customRole is RoleBehaviour rb)
-                {
-                    RoleManager.Instance.SetRole(player, rb.Role);
-                }
-                else
-                {
-                    DraftPlugin.Instance.Log.LogWarning($"Nie znaleziono roli: {roleName}. Daje Crewmate.");
-                    RoleManager.Instance.SetRole(player, RoleTypes.Crewmate);
+                    try { RoleManager.Instance.SetRole(player, kvp.Value); } 
+                    catch (System.Exception e) { DraftPlugin.Instance.Log.LogError($"[Draft Apply Error] {e.Message}"); }
                 }
             }
         }
@@ -294,53 +272,45 @@ namespace TownOfUsDraft
         // --- Helpery ---
         public static void OnPlayerSelectedRole(string roleName, byte forcedPlayerId = 255)
         {
-            // Nie musimy tu szukać obiektu! Po prostu ufamy nazwie.
             byte targetId = (forcedPlayerId == 255) ? PlayerControl.LocalPlayer.PlayerId : forcedPlayerId;
-
-            // RPC
-            if (AmongUsClient.Instance.AmHost || targetId == PlayerControl.LocalPlayer.PlayerId)
+            var player = GetPlayerById(targetId);
+            if (player != null)
             {
-                SendRoleSelectedRpc(targetId, roleName); 
-            }
+                RoleTypes type = RoleTypes.Crewmate;
+                bool found = false;
+                foreach (var r in RoleManager.Instance.AllRoles) {
+                    var uObj = r as UnityEngine.Object;
+                    if (uObj != null && uObj.name == roleName) { type = ((RoleBehaviour)r).Role; found = true; break; }
+                }
+                
+                if (!found) {
+                     foreach (var r in RoleManager.Instance.AllRoles) {
+                        var uObj = r as UnityEngine.Object;
+                        if (uObj != null && !VanillaBannedRoles.Contains(uObj.name)) { type = ((RoleBehaviour)r).Role; break; }
+                     }
+                }
 
-            // Reset HUD
-            if (targetId == PlayerControl.LocalPlayer.PlayerId) 
-            {
-                DraftHud.ActiveTurnPlayerId = 255; 
-                DraftHud.MyOptions.Clear();
-            }
-            
-            // ZAPISUJEMY STRINGA
-            if (PendingRoles.ContainsKey(targetId)) 
-                PendingRoles[targetId] = roleName;
-            else 
-                PendingRoles.Add(targetId, roleName);
-            
-            _globalUsedRoles.Add(roleName);
-            DraftPlugin.Instance.Log.LogInfo($"Gracz {targetId} wybral: {roleName}");
+                if (AmongUsClient.Instance.AmHost || targetId == PlayerControl.LocalPlayer.PlayerId)
+                    SendRoleSelectedRpc(targetId, roleName);
 
-            // Timer hosta... (twoja reszta kodu)
-            if (AmongUsClient.Instance.AmHost) {
-                DraftHud.HostTimerActive = true; 
-                DraftHud.TurnWatchdogTimer = 0f;
-                // StartNextTurn(); // nie ma takiej metody!
+                if (targetId == PlayerControl.LocalPlayer.PlayerId) DraftHud.ActiveTurnPlayerId = 255; 
+                
+                if (!PendingRoles.ContainsKey(targetId)) PendingRoles.Add(targetId, type);
+                else PendingRoles[targetId] = type;
+                
+                if (AmongUsClient.Instance.AmHost) {
+                    DraftHud.HostTimerActive = true; 
+                    DraftHud.TurnWatchdogTimer = 0f;
+                }
             }
         }
         
         public static void ApplyRoleFromRpc(PlayerControl player, RoleTypes type) {
-            var fallbackRole = RoleManager.Instance.AllRoles.ToArray().FirstOrDefault(r => r.Role == type);
-
-            // Rzutujemy znaleziony RoleBehaviour na ICustomRole (MiraAPI to zapewnia)
-            if (fallbackRole != null && fallbackRole is ICustomRole cr)
-            {
-                // --- POPRAWKA ---
-                // Zamieniamy obiekt 'cr' na nazwę (String), bo tego oczekuje teraz słownik
-                string roleNameAsString = RoleCategorizer.GetPrettyName(cr); 
-
-                if (!PendingRoles.ContainsKey(player.PlayerId)) 
-                    PendingRoles.Add(player.PlayerId, roleNameAsString);
-                else 
-                    PendingRoles[player.PlayerId] = roleNameAsString;
+            if (!PendingRoles.ContainsKey(player.PlayerId)) PendingRoles.Add(player.PlayerId, type);
+            else PendingRoles[player.PlayerId] = type;
+            if (AmongUsClient.Instance.AmHost) {
+                DraftHud.HostTimerActive = true; 
+                DraftHud.TurnWatchdogTimer = 0f;
             }
         }
 
@@ -358,20 +328,14 @@ namespace TownOfUsDraft
             if (roll < 80) return RoleCategory.CrewSupport;
             return RoleCategory.CrewPower;
         } 
-        
         private static List<string> GenerateUniqueOptions(RoleCategory category, System.Random rng) {
-            // Pobieramy nazwy ról z poprawionego Categorizera
-            List<string> categoryRoles = RoleCategorizer.GetRandomRoleNames(category, 20); // Pobierz pulę 20
-            
-            // Filtrujemy już użyte
-            var available = categoryRoles.Where(r => !_globalUsedRoles.Contains(r)).Distinct().ToList();
-            
-            // Fallback jeśli brakuje ról
-            if (available.Count < 3) available = categoryRoles.Distinct().ToList(); 
-            
+            List<string> allRoles = GetAllAvailableRoleNames();
+            List<string> categoryRoles = RoleCategorizer.GetRolesInCategory(category, allRoles);
+            var available = categoryRoles.Where(r => !_globalUsedRoles.Contains(r)).ToList();
+            if (available.Count < 3) available = categoryRoles; 
+            if (available.Count == 0) available = allRoles.Where(r => !r.Contains("Impostor")).ToList();
             return available.OrderBy(x => rng.Next()).Take(3).ToList();
         }
-
         private static List<string> GetAllAvailableRoleNames() {
             List<string> list = new List<string>();
             foreach (var r in RoleManager.Instance.AllRoles) { 
@@ -398,6 +362,34 @@ namespace TownOfUsDraft
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
         public static void OnRandomRoleSelected() { if (DraftHud.MyOptions.Count > 0) OnPlayerSelectedRole(DraftHud.MyOptions[new System.Random().Next(DraftHud.MyOptions.Count)]); }
-        private static void LogAllDetectedOptions() { }
+        private static void LogAllDetectedOptions()
+        {
+            DraftPlugin.Instance.Log.LogInfo("--- [DEBUG] SKANOWANIE OPCJI ---");
+            foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try {
+                    var type = asm.GetType("TownOfUs.CustomOption");
+                    if (type != null)
+                    {
+                        DraftPlugin.Instance.Log.LogInfo($"Znaleziono CustomOption w: {asm.GetName().Name}");
+                        var field = type.GetField("options", BindingFlags.Public | BindingFlags.Static);
+                        var list = field?.GetValue(null) as IList;
+                        if (list != null) {
+                            foreach(var opt in list) {
+                                var nameProp = opt.GetType().GetField("Name");
+                                var valField = opt.GetType().GetField("value") ?? opt.GetType().GetField("Selection");
+                                if (nameProp != null && valField != null) {
+                                    string t = nameProp.GetValue(opt) as string;
+                                    var v = valField.GetValue(opt);
+                                    if (t.Contains("Neutral") || t.Contains("Count")) 
+                                        DraftPlugin.Instance.Log.LogInfo($" -> {t}: {v}");
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+            }
+            DraftPlugin.Instance.Log.LogInfo("--------------------------------");
+        }
     }
 }
