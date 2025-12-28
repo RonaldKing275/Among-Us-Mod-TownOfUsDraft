@@ -45,7 +45,6 @@ namespace TownOfUsDraft
                     }
                 }
             }
-            
             if (_cachedRoles[DraftCategory.Crewmate].Count == 0) _cachedRoles[DraftCategory.Crewmate].Add("Crewmate");
             if (_cachedRoles[DraftCategory.Impostor].Count == 0) _cachedRoles[DraftCategory.Impostor].Add("Impostor");
         }
@@ -55,7 +54,6 @@ namespace TownOfUsDraft
              return _cachedRoles != null && _cachedRoles.ContainsKey(cat) && _cachedRoles[cat].Count > 0;
         }
 
-        // --- NAPRAWA BŁĘDU CS0117 ---
         public static DraftCategory GetRandomCrewmateCategory()
         {
             var validCats = new List<DraftCategory> { 

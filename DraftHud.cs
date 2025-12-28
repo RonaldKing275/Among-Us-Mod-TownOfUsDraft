@@ -1,76 +1,151 @@
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
 using UnityEngine;
 using System.Collections.Generic;
+using InnerNet; 
 
 namespace TownOfUsDraft
 {
     public class DraftHud : MonoBehaviour
     {
         public static DraftHud Instance;
-        public bool ShowHud = false;
-        private List<string> _currentOptions = new List<string>();
+        public static bool IsDraftActive = false;
         
-        private GUIStyle _boxStyle;
-        private GUIStyle _buttonStyle;
-        private GUIStyle _randomButtonStyle;
-        private bool _stylesInit = false;
+        public static byte ActiveTurnPlayerId = 255; 
+        public static string CategoryTitle = "";
+        public static List<string> MyOptions = new List<string>();
+
+        // Timer Hosta
+        public static bool HostTimerActive = false;
+        private float _hostTimer = 0f;
+
+        // WATCHDOG
+        public static float TurnWatchdogTimer = 0f;
+        public static byte CurrentTurnPlayerId = 255;
+        // NOWE POLE: Opcje aktualnego gracza (dla auto-picka)
+        public static List<string> CurrentTurnOptions = new List<string>(); 
+        private const float MAX_TURN_TIME = 20.0f; 
+
+        private bool _wasPaused = false;
 
         private void Awake() { Instance = this; }
 
-        public void ShowSelection(List<string> options) { _currentOptions = options; ShowHud = true; }
-
-        private void InitStyles()
+        private void Update()
         {
-            if (_stylesInit) return;
-            _boxStyle = new GUIStyle(GUI.skin.box);
-            _boxStyle.normal.background = Texture2D.whiteTexture;
-            _buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 20 };
-            _buttonStyle.normal.textColor = Color.white;
-            _randomButtonStyle = new GUIStyle(GUI.skin.button) { fontSize = 20, fontStyle = FontStyle.Bold };
-            _randomButtonStyle.normal.textColor = Color.cyan;
-            _stylesInit = true;
+            if (HostTimerActive && AmongUsClient.Instance.AmHost)
+            {
+                _hostTimer += Time.unscaledDeltaTime;
+                if (_hostTimer >= 0.5f)
+                {
+                    HostTimerActive = false;
+                    _hostTimer = 0f;
+                    DraftManager.ProcessNextTurn();
+                }
+            }
+
+            if (IsDraftActive && AmongUsClient.Instance.AmHost && !HostTimerActive)
+            {
+                if (CurrentTurnPlayerId != 255)
+                {
+                    TurnWatchdogTimer += Time.unscaledDeltaTime;
+                    if (TurnWatchdogTimer >= MAX_TURN_TIME)
+                    {
+                        DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Auto-pick.");
+                        TurnWatchdogTimer = 0f;
+                        DraftManager.ForceSkipTurn(); // To teraz wylosuje rolę!
+                    }
+                }
+            }
+
+            var state = AmongUsClient.Instance.GameState;
+            if (state == InnerNetClient.GameStates.NotJoined || state == InnerNetClient.GameStates.Ended)
+            {
+                if (IsDraftActive || _wasPaused) ForceUnfreeze();
+                IsDraftActive = false;
+                HostTimerActive = false;
+                return;
+            }
+
+            if (IsDraftActive)
+            {
+                if (Time.timeScale != 0f) { Time.timeScale = 0f; _wasPaused = true; }
+                if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = false;
+            }
+            else if (_wasPaused)
+            {
+                ForceUnfreeze();
+            }
+        }
+
+        private void ForceUnfreeze()
+        {
+            Time.timeScale = 1f;
+            _wasPaused = false;
+            if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = true;
         }
 
         private void OnGUI()
         {
-            if (!ShowHud || !DraftManager.IsDraftActive) return;
+            if (!IsDraftActive) return;
 
-            InitStyles();
+            GUI.depth = -9999;
+            GUI.backgroundColor = new Color(0.05f, 0.05f, 0.1f, 0.98f); 
+            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
 
-            float width = 600; 
-            float height = 500;
-            float x = (Screen.width - width) / 2;
-            float y = (Screen.height - height) / 2;
-
-            GUI.color = new Color(0, 0, 0, 0.95f);
-            GUI.DrawTexture(new Rect(x, y, width, height), Texture2D.whiteTexture);
-            GUI.color = Color.white;
-
-            GUILayout.BeginArea(new Rect(x, y, width, height));
-            GUILayout.Label("DRAFT MODE", _buttonStyle); 
-            
-            if (_currentOptions.Count > 0)
+            if (ActiveTurnPlayerId == 255)
             {
-                foreach (var role in _currentOptions)
+                GUIStyle processingStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 32, fontStyle = FontStyle.Bold };
+                processingStyle.normal.textColor = Color.gray;
+                GUI.Label(new Rect(0, Screen.height/2 - 50, Screen.width, 100), "FINALIZACJA DRAFTU...", processingStyle);
+                return;
+            }
+
+            bool isMyTurn = (PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == ActiveTurnPlayerId);
+            
+            string activeName = "Unknown";
+            foreach(var p in PlayerControl.AllPlayerControls) 
+                if(p.PlayerId == ActiveTurnPlayerId) activeName = p.Data.PlayerName;
+
+            GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
+            titleStyle.normal.textColor = Color.white;
+
+            string timeLeft = "";
+            if (AmongUsClient.Instance.AmHost) 
+                timeLeft = $" ({Mathf.Ceil(MAX_TURN_TIME - TurnWatchdogTimer)}s)";
+
+            if (isMyTurn)
+            {
+                GUI.Label(new Rect(0, 50, Screen.width, 50), $"TWOJA TURA: {CategoryTitle}{timeLeft}", titleStyle);
+                
+                float w = 600;
+                float x = (Screen.width - w) / 2;
+                GUIStyle btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 24 };
+
+                if (MyOptions != null)
                 {
-                    if (role == "Random")
+                    for(int i=0; i<MyOptions.Count; i++)
                     {
-                        GUILayout.Space(15);
-                        if (GUILayout.Button("? LOSOWA ROLA ?", _randomButtonStyle, GUILayout.Height(60))) {
-                            DraftManager.OnPlayerSelectedRole("Random"); 
-                            ShowHud = false;
+                        string display = MyOptions[i].Replace("Role", "");
+                        if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, btnStyle))
+                        {
+                            DraftManager.OnPlayerSelectedRole(MyOptions[i]);
                         }
                     }
-                    else
+                    GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
+                    if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", btnStyle))
                     {
-                        if (GUILayout.Button(role, _buttonStyle, GUILayout.Height(50))) {
-                            DraftManager.OnPlayerSelectedRole(role); 
-                            ShowHud = false; 
-                        }
+                        DraftManager.OnRandomRoleSelected();
                     }
                 }
             }
-            else { GUILayout.Label("Oczekiwanie...", _buttonStyle); }
-            GUILayout.EndArea();
+            else
+            {
+                GUIStyle waitStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 48, fontStyle = FontStyle.Bold };
+                waitStyle.normal.textColor = Color.yellow;
+                
+                string dots = ""; int t = (int)(Time.unscaledTime * 2) % 4; for(int i=0; i<t; i++) dots += ".";
+                GUI.Label(new Rect(0, Screen.height/2 - 100, Screen.width, 200), $"WYBIERA GRACZ: {activeName}{dots}", waitStyle);
+            }
         }
     }
 }
