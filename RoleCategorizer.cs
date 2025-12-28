@@ -120,10 +120,12 @@ namespace TownOfUsDraft
                 case RoleAlignment.CrewmateKilling: return DraftCategory.Killing;
                 case RoleAlignment.CrewmatePower: return DraftCategory.Power;
                 case RoleAlignment.CrewmateProtective: return DraftCategory.Protective;
+
                 case RoleAlignment.ImpostorKilling: return DraftCategory.Impostor;
                 case RoleAlignment.ImpostorConcealing: return DraftCategory.Impostor;
                 case RoleAlignment.ImpostorSupport: return DraftCategory.Impostor;
                 case RoleAlignment.ImpostorPower: return DraftCategory.Impostor;
+
                 case RoleAlignment.NeutralBenign: return DraftCategory.NeutralBenign;
                 case RoleAlignment.NeutralEvil: return DraftCategory.NeutralEvil;
                 case RoleAlignment.NeutralKilling: return DraftCategory.NeutralKilling;
