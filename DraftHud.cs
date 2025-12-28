@@ -15,16 +15,16 @@ namespace TownOfUsDraft
         public static string CategoryTitle = "";
         public static List<string> MyOptions = new List<string>();
 
-        public static List<string> CurrentTurnOptions = new List<string>();
-
-        // --- TIMER HOSTA (Szybkie przejście) ---
+        // Timer Hosta
         public static bool HostTimerActive = false;
         private float _hostTimer = 0f;
 
-        // --- WATCHDOG (Zabezpieczenie przed zwiechą) ---
+        // WATCHDOG
         public static float TurnWatchdogTimer = 0f;
         public static byte CurrentTurnPlayerId = 255;
-        private const float MAX_TURN_TIME = 20.0f; // 20 sekund na ruch
+        // NOWE POLE: Opcje aktualnego gracza (dla auto-picka)
+        public static List<string> CurrentTurnOptions = new List<string>(); 
+        private const float MAX_TURN_TIME = 20.0f; 
 
         private bool _wasPaused = false;
 
@@ -32,7 +32,6 @@ namespace TownOfUsDraft
 
         private void Update()
         {
-            // 1. Logika Hosta - Szybkie przejście po wyborze
             if (HostTimerActive && AmongUsClient.Instance.AmHost)
             {
                 _hostTimer += Time.unscaledDeltaTime;
@@ -44,7 +43,6 @@ namespace TownOfUsDraft
                 }
             }
 
-            // 2. Logika Hosta - WATCHDOG
             if (IsDraftActive && AmongUsClient.Instance.AmHost && !HostTimerActive)
             {
                 if (CurrentTurnPlayerId != 255)
@@ -52,14 +50,13 @@ namespace TownOfUsDraft
                     TurnWatchdogTimer += Time.unscaledDeltaTime;
                     if (TurnWatchdogTimer >= MAX_TURN_TIME)
                     {
-                        DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Skip.");
+                        DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Auto-pick.");
                         TurnWatchdogTimer = 0f;
-                        DraftManager.ForceSkipTurn();
+                        DraftManager.ForceSkipTurn(); // To teraz wylosuje rolę!
                     }
                 }
             }
 
-            // --- Resetowanie gry ---
             var state = AmongUsClient.Instance.GameState;
             if (state == InnerNetClient.GameStates.NotJoined || state == InnerNetClient.GameStates.Ended)
             {
@@ -69,7 +66,6 @@ namespace TownOfUsDraft
                 return;
             }
 
-            // Pauza
             if (IsDraftActive)
             {
                 if (Time.timeScale != 0f) { Time.timeScale = 0f; _wasPaused = true; }
@@ -96,7 +92,6 @@ namespace TownOfUsDraft
             GUI.backgroundColor = new Color(0.05f, 0.05f, 0.1f, 0.98f); 
             GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
 
-            // Ekran ładowania / przetwarzania
             if (ActiveTurnPlayerId == 255)
             {
                 GUIStyle processingStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 32, fontStyle = FontStyle.Bold };
@@ -114,7 +109,6 @@ namespace TownOfUsDraft
             GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
             titleStyle.normal.textColor = Color.white;
 
-            // Timer wizualny
             string timeLeft = "";
             if (AmongUsClient.Instance.AmHost) 
                 timeLeft = $" ({Mathf.Ceil(MAX_TURN_TIME - TurnWatchdogTimer)}s)";
@@ -137,11 +131,9 @@ namespace TownOfUsDraft
                             DraftManager.OnPlayerSelectedRole(MyOptions[i]);
                         }
                     }
-                    
                     GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
                     if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", btnStyle))
                     {
-                        // To wywołanie powodowało błąd - teraz DraftManager musi mieć tę metodę!
                         DraftManager.OnRandomRoleSelected();
                     }
                 }
