@@ -9,7 +9,7 @@ using BepInEx.Unity.IL2CPP;
 using BepInEx.Unity.IL2CPP.Utils.Collections; 
 using System.Reflection;
 using System.Collections; 
-using Hazel; 
+using Hazel;
 
 namespace TownOfUsDraft
 {
@@ -18,7 +18,7 @@ namespace TownOfUsDraft
         public static Queue<byte> TurnQueue = new Queue<byte>();
         public static Dictionary<byte, DraftCategory> HostDraftAssignments = new Dictionary<byte, DraftCategory>();
         private static HashSet<string> _globalUsedRoles = new HashSet<string>();
-        public static Dictionary<byte, RoleTypes> PendingRoles = new Dictionary<byte, RoleTypes>();
+        public static Dictionary<byte, ICustomRole> PendingRoles = new Dictionary<byte, ICustomRole>();
 
         private static readonly HashSet<string> VanillaBannedRoles = new HashSet<string>
         {
@@ -214,7 +214,7 @@ namespace TownOfUsDraft
             int nb = GetMiraOption("Neutral Benign");
             int rndN = GetMiraOption("Random Neutral");
 
-            if (nk==0 && ne==0 && nb==0 && rndN==0 && playerCount >= 5) {
+            if (nk==0 && ne==0 && nb==0 && rndN==0 && playerCount >= 4) {
                  DraftPlugin.Instance.Log.LogWarning("[Config] 0 Neutrali. Ustawiam 1 NK.");
                  nk = 1; 
             } else {
@@ -328,38 +328,41 @@ namespace TownOfUsDraft
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
 
-        public static void OnPlayerSelectedRole(string roleName, byte forcedPlayerId = 255)
+        public static void OnPlayerSelectedRole(ICustomRole role, byte forcedPlayerId = 255)
         {
-            byte targetId = (forcedPlayerId == 255) ? PlayerControl.LocalPlayer.PlayerId : forcedPlayerId;
-            var player = GetPlayerById(targetId);
-            if (player != null)
+            // Jeśli z jakiegoś powodu rola jest nullem (błąd), przerywamy
+            if (role == null) 
             {
-                RoleTypes type = RoleTypes.Crewmate;
-                
-                foreach (var r in RoleManager.Instance.AllRoles) {
-                    var uObj = r as UnityEngine.Object;
-                    string rName = r.ToString();
-                    if (rName.Contains(".")) rName = rName.Split('.').Last();
-                    
-                    if (rName == roleName || (uObj != null && uObj.name == roleName)) 
-                    { 
-                        type = ((RoleBehaviour)r).Role; 
-                        break; 
-                    }
-                }
+                DraftPlugin.Instance.Log.LogError("Błąd: Wybrano pustą rolę!");
+                return;
+            }
 
-                if (AmongUsClient.Instance.AmHost || targetId == PlayerControl.LocalPlayer.PlayerId)
-                    SendRoleSelectedRpc(targetId, roleName);
+            byte targetId = (forcedPlayerId == 255) ? PlayerControl.LocalPlayer.PlayerId : forcedPlayerId;
+            
+            // Logika sieciowa (RPC)
+            // Wysyłamy klucz (role.Name), żeby inni gracze wiedzieli co wybraliśmy
+            if (AmongUsClient.Instance.AmHost || targetId == PlayerControl.LocalPlayer.PlayerId)
+            {
+                SendRoleSelectedRpc(targetId, role.Name); 
+            }
 
-                if (targetId == PlayerControl.LocalPlayer.PlayerId) DraftHud.ActiveTurnPlayerId = 255; 
-                
-                if (!PendingRoles.ContainsKey(targetId)) PendingRoles.Add(targetId, type);
-                else PendingRoles[targetId] = type;
-                
-                if (AmongUsClient.Instance.AmHost) {
-                    DraftHud.HostTimerActive = true; 
-                    DraftHud.TurnWatchdogTimer = 0f;
-                }
+            // Resetowanie stanu tury dla lokalnego gracza
+            if (targetId == PlayerControl.LocalPlayer.PlayerId) 
+                DraftHud.ActiveTurnPlayerId = 255; 
+            
+            // --- KLUCZOWA POPRAWKA ---
+            // Nie szukamy w RoleTypes. Zapisujemy obiekt ICustomRole bezpośrednio.
+            if (!PendingRoles.ContainsKey(targetId)) 
+                PendingRoles.Add(targetId, role);
+            else 
+                PendingRoles[targetId] = role;
+            
+            DraftPlugin.Instance.Log.LogInfo($"Gracz {targetId} wybrał: {role.Name}");
+
+            // Obsługa timera hosta
+            if (AmongUsClient.Instance.AmHost) {
+                DraftHud.HostTimerActive = true; 
+                DraftHud.TurnWatchdogTimer = 0f;
             }
         }
 
@@ -417,6 +420,33 @@ namespace TownOfUsDraft
                 }
             } catch {}
             DraftPlugin.Instance.Log.LogInfo("--------------------------------");
+
+            
+        }
+
+        public static void AssignDraftedRoles()
+        {
+            foreach (var player in PlayerControl.AllPlayerControls)
+            {
+                if (player.Data.Disconnected || player.Data.IsDead) continue;
+
+                if (PendingRoles.ContainsKey(player.PlayerId))
+                {
+                    ICustomRole roleToAssign = PendingRoles[player.PlayerId];
+                    
+                    if (roleToAssign != null)
+                    {
+                        // TO JEST KLUCZOWE: Używamy metody .Assign() z MiraAPI
+                        roleToAssign.Assign(player);
+                        DraftPlugin.Instance.Log.LogInfo($"[Draft] Przypisano {player.Data.PlayerName} -> {roleToAssign.Name}");
+                    }
+                }
+                else
+                {
+                    // Opcjonalnie: Upewnij się, że gracze bez roli są Crewmate
+                    // CustomRoleManager.Instance.GetRole("Crewmate")?.Assign(player);
+                }
+            }
         }
     }
 }

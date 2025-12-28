@@ -2,113 +2,63 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using MiraAPI.Roles;
-using TownOfUs.Roles;
-using System.Reflection;
+using TownOfUs.Roles; // Wymagane: Dodaj referencję do TownOfUsMira.dll
 
 namespace TownOfUsDraft
 {
+    // Definicja kategorii
     public enum DraftCategory { Crewmate, Support, Investigative, Killing, Power, Protective, Impostor, NeutralBenign, NeutralEvil, NeutralKilling, Unknown }
 
     public static class RoleCategorizer
     {
-        private static Dictionary<DraftCategory, List<string>> _cachedRoles;
-        private static object _roleOptionsInstance;
+        // ZMIANA: Przechowujemy obiekty ICustomRole, a nie stringi!
+        private static Dictionary<DraftCategory, List<ICustomRole>> _cachedRoles;
+        private static List<ICustomRole> _allValidRoles = new List<ICustomRole>();
 
         public static void InitializeRoles()
         {
-            _cachedRoles = new Dictionary<DraftCategory, List<string>>();
-            foreach (DraftCategory cat in System.Enum.GetValues(typeof(DraftCategory))) _cachedRoles[cat] = new List<string>();
+            _cachedRoles = new Dictionary<DraftCategory, List<ICustomRole>>();
+            _allValidRoles.Clear();
 
-            try {
-                var type = System.Type.GetType("TownOfUs.Options.RoleOptions, TownOfUsMira");
-                if (type != null) _roleOptionsInstance = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            } catch {}
+            foreach (DraftCategory cat in System.Enum.GetValues(typeof(DraftCategory))) 
+                _cachedRoles[cat] = new List<ICustomRole>();
 
-            var allRoles = CustomRoleManager.AllRoles; 
-
-            foreach (var roleObj in allRoles)
+            // Pobieramy prawdziwe obiekty ról z MiraAPI
+            foreach (var roleObj in CustomRoleManager.Instance.AllRoles)
             {
-                if (roleObj is ICustomRole iRole)
-                {
-                    string roleName = iRole.ToString();
-                    if (!IsRoleEnabledInConfig(roleName)) continue;
+                if (roleObj.IsHidden) continue;
 
-                    if (roleObj is ITownOfUsRole touRole)
+                if (roleObj is ITownOfUsRole touRole)
+                {
+                    // Mapujemy kategorię z Town Of Us na nasze enumy
+                    DraftCategory cat = MapTouAlignment(touRole.Alignment);
+                    
+                    if (!_cachedRoles[cat].Contains(roleObj))
                     {
-                        DraftCategory cat = MapTouAlignment(touRole.RoleAlignment);
-                        _cachedRoles[cat].Add(roleName);
-                    }
-                    else
-                    {
-                        if (roleName.Contains("Impostor")) _cachedRoles[DraftCategory.Impostor].Add(roleName);
-                        else _cachedRoles[DraftCategory.Crewmate].Add(roleName);
+                        _cachedRoles[cat].Add(roleObj);
+                        _allValidRoles.Add(roleObj);
                     }
                 }
             }
-            if (_cachedRoles[DraftCategory.Crewmate].Count == 0) _cachedRoles[DraftCategory.Crewmate].Add("Crewmate");
-            if (_cachedRoles[DraftCategory.Impostor].Count == 0) _cachedRoles[DraftCategory.Impostor].Add("Impostor");
-        }
-        
-        public static bool HasRoles(DraftCategory cat)
-        {
-             return _cachedRoles != null && _cachedRoles.ContainsKey(cat) && _cachedRoles[cat].Count > 0;
+            
+            Debug.Log($"[Draft] Załadowano {_allValidRoles.Count} ról.");
         }
 
-        public static DraftCategory GetRandomCrewmateCategory()
-        {
-            var validCats = new List<DraftCategory> { 
-                DraftCategory.Support, DraftCategory.Investigative, 
-                DraftCategory.Killing, DraftCategory.Power, DraftCategory.Protective 
-            };
-            return validCats[Random.Range(0, validCats.Count)];
-        }
-
-        private static bool IsRoleEnabledInConfig(string roleName)
-        {
-            if (_roleOptionsInstance == null) return true;
-            try 
-            {
-                string sanitizedName = roleName.Replace(" ", "");
-                var prop = _roleOptionsInstance.GetType().GetProperty(sanitizedName);
-                object optObj = null;
-                if (prop != null) optObj = prop.GetValue(_roleOptionsInstance);
-                else {
-                    var field = _roleOptionsInstance.GetType().GetField(sanitizedName + "Options");
-                    if (field != null) optObj = field.GetValue(_roleOptionsInstance);
-                }
-
-                if (optObj != null)
-                {
-                    var chanceProp = optObj.GetType().GetProperty("SpawnChance") ?? optObj.GetType().GetProperty("Value");
-                    if (chanceProp != null)
-                    {
-                        float val = System.Convert.ToSingle(chanceProp.GetValue(optObj));
-                        if (val <= 0) return false; 
-                    }
-                }
-            } catch {}
-            return true;
-        }
-
-        public static List<string> GetRandomRoles(DraftCategory category, int count)
+        public static ICustomRole GetRandomRole(DraftCategory category)
         {
             if (_cachedRoles == null) InitializeRoles();
-            if (!HasRoles(category)) 
-            {
-                if(category != DraftCategory.Impostor) return GetRandomRoles(DraftCategory.Crewmate, count);
-                return new List<string>{"Impostor"};
-            }
+            if (!_cachedRoles.ContainsKey(category)) return null;
+            var pool = _cachedRoles[category];
+            if (pool.Count == 0) return null;
+            return pool[Random.Range(0, pool.Count)];
+        }
 
-            List<string> pool = new List<string>(_cachedRoles[category]);
-            List<string> picked = new List<string>();
-            for (int i = 0; i < count; i++)
-            {
-                if (pool.Count == 0) pool = new List<string>(_cachedRoles[category]);
-                int idx = Random.Range(0, pool.Count);
-                picked.Add(pool[idx]);
-                pool.RemoveAt(idx);
-            }
-            return picked;
+        // Metoda do losowania dowolnej roli (dla przycisku Random)
+        public static ICustomRole GetRandomRoleAny()
+        {
+            if (_allValidRoles == null || _allValidRoles.Count == 0) InitializeRoles();
+            if (_allValidRoles.Count == 0) return null;
+            return _allValidRoles[Random.Range(0, _allValidRoles.Count)];
         }
 
         private static DraftCategory MapTouAlignment(RoleAlignment alignment)
@@ -125,7 +75,7 @@ namespace TownOfUsDraft
                 case RoleAlignment.ImpostorConcealing: return DraftCategory.Impostor;
                 case RoleAlignment.ImpostorSupport: return DraftCategory.Impostor;
                 case RoleAlignment.ImpostorPower: return DraftCategory.Impostor;
-
+                
                 case RoleAlignment.NeutralBenign: return DraftCategory.NeutralBenign;
                 case RoleAlignment.NeutralEvil: return DraftCategory.NeutralEvil;
                 case RoleAlignment.NeutralKilling: return DraftCategory.NeutralKilling;

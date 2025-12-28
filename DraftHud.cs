@@ -2,7 +2,8 @@ using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using UnityEngine;
 using System.Collections.Generic;
-using InnerNet; 
+using InnerNet;
+using MiraAPI.Roles;
 
 namespace TownOfUsDraft
 {
@@ -13,7 +14,7 @@ namespace TownOfUsDraft
         
         public static byte ActiveTurnPlayerId = 255; 
         public static string CategoryTitle = "";
-        public static List<string> MyOptions = new List<string>();
+        public static List<ICustomRole> MyOptions = new List<ICustomRole>();
 
         // Timer Hosta
         public static bool HostTimerActive = false;
@@ -123,14 +124,28 @@ namespace TownOfUsDraft
 
                 if (MyOptions != null)
                 {
-                    for(int i=0; i<MyOptions.Count; i++)
+                    for(int i=0; i < MyOptions.Count; i++)
                     {
-                        string display = MyOptions[i].Replace("Role", "");
+                        ICustomRole roleOption = MyOptions[i];
+                        
+                        // --- FIX NAZW: Tłumaczenie ---
+                        // Pobieramy ładną nazwę z gry
+                        string display = Language.Translate(roleOption.Name);
+                        
+                        // Fallback: jeśli tłumaczenie nie zadziałało i widzimy klucz (np. TownOfUs...), ucinamy go
+                        if (display.Contains("TownOfUs")) 
+                        {
+                            display = roleOption.Name.Split('.').Last();
+                        }
+
+                        // Rysowanie przycisku
                         if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, btnStyle))
                         {
-                            DraftManager.OnPlayerSelectedRole(MyOptions[i]);
+                            // Przekazujemy CAŁY obiekt roli, a nie tylko nazwę
+                            DraftManager.OnPlayerSelectedRole(roleOption);
                         }
                     }
+
                     GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
                     if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", btnStyle))
                     {
