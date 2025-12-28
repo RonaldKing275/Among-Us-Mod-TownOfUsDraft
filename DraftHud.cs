@@ -2,8 +2,7 @@ using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using UnityEngine;
 using System.Collections.Generic;
-using InnerNet;
-using MiraAPI.Roles;
+using InnerNet; 
 
 namespace TownOfUsDraft
 {
@@ -14,18 +13,16 @@ namespace TownOfUsDraft
         
         public static byte ActiveTurnPlayerId = 255; 
         public static string CategoryTitle = "";
-        public static List<ICustomRole> MyOptions = new List<ICustomRole>();
+        public static List<string> MyOptions = new List<string>();
 
-        // Timer Hosta
+        // --- TIMER HOSTA (Szybkie przejście) ---
         public static bool HostTimerActive = false;
         private float _hostTimer = 0f;
 
-        // WATCHDOG
+        // --- WATCHDOG (Zabezpieczenie przed zwiechą) ---
         public static float TurnWatchdogTimer = 0f;
         public static byte CurrentTurnPlayerId = 255;
-        // NOWE POLE: Opcje aktualnego gracza (dla auto-picka)
-        public static List<string> CurrentTurnOptions = new List<string>(); 
-        private const float MAX_TURN_TIME = 20.0f; 
+        private const float MAX_TURN_TIME = 20.0f; // 20 sekund na ruch
 
         private bool _wasPaused = false;
 
@@ -33,6 +30,7 @@ namespace TownOfUsDraft
 
         private void Update()
         {
+            // 1. Logika Hosta - Szybkie przejście po wyborze
             if (HostTimerActive && AmongUsClient.Instance.AmHost)
             {
                 _hostTimer += Time.unscaledDeltaTime;
@@ -44,6 +42,7 @@ namespace TownOfUsDraft
                 }
             }
 
+            // 2. Logika Hosta - WATCHDOG
             if (IsDraftActive && AmongUsClient.Instance.AmHost && !HostTimerActive)
             {
                 if (CurrentTurnPlayerId != 255)
@@ -51,13 +50,14 @@ namespace TownOfUsDraft
                     TurnWatchdogTimer += Time.unscaledDeltaTime;
                     if (TurnWatchdogTimer >= MAX_TURN_TIME)
                     {
-                        DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Auto-pick.");
+                        DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Skip.");
                         TurnWatchdogTimer = 0f;
-                        DraftManager.ForceSkipTurn(); // To teraz wylosuje rolę!
+                        DraftManager.ForceSkipTurn();
                     }
                 }
             }
 
+            // --- Resetowanie gry ---
             var state = AmongUsClient.Instance.GameState;
             if (state == InnerNetClient.GameStates.NotJoined || state == InnerNetClient.GameStates.Ended)
             {
@@ -67,6 +67,7 @@ namespace TownOfUsDraft
                 return;
             }
 
+            // Pauza
             if (IsDraftActive)
             {
                 if (Time.timeScale != 0f) { Time.timeScale = 0f; _wasPaused = true; }
@@ -93,6 +94,7 @@ namespace TownOfUsDraft
             GUI.backgroundColor = new Color(0.05f, 0.05f, 0.1f, 0.98f); 
             GUI.Box(new Rect(0, 0, Screen.width, Screen.height), "");
 
+            // Ekran ładowania / przetwarzania
             if (ActiveTurnPlayerId == 255)
             {
                 GUIStyle processingStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 32, fontStyle = FontStyle.Bold };
@@ -110,6 +112,7 @@ namespace TownOfUsDraft
             GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
             titleStyle.normal.textColor = Color.white;
 
+            // Timer wizualny
             string timeLeft = "";
             if (AmongUsClient.Instance.AmHost) 
                 timeLeft = $" ({Mathf.Ceil(MAX_TURN_TIME - TurnWatchdogTimer)}s)";
@@ -124,31 +127,19 @@ namespace TownOfUsDraft
 
                 if (MyOptions != null)
                 {
-                    for(int i=0; i < MyOptions.Count; i++)
+                    for(int i=0; i<MyOptions.Count; i++)
                     {
-                        ICustomRole roleOption = MyOptions[i];
-                        
-                        // --- FIX NAZW: Tłumaczenie ---
-                        // Pobieramy ładną nazwę z gry
-                        string display = Language.Translate(roleOption.Name);
-                        
-                        // Fallback: jeśli tłumaczenie nie zadziałało i widzimy klucz (np. TownOfUs...), ucinamy go
-                        if (display.Contains("TownOfUs")) 
-                        {
-                            display = roleOption.Name.Split('.').Last();
-                        }
-
-                        // Rysowanie przycisku
+                        string display = MyOptions[i].Replace("Role", "");
                         if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, btnStyle))
                         {
-                            // Przekazujemy CAŁY obiekt roli, a nie tylko nazwę
-                            DraftManager.OnPlayerSelectedRole(roleOption);
+                            DraftManager.OnPlayerSelectedRole(MyOptions[i]);
                         }
                     }
-
+                    
                     GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
                     if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", btnStyle))
                     {
+                        // To wywołanie powodowało błąd - teraz DraftManager musi mieć tę metodę!
                         DraftManager.OnRandomRoleSelected();
                     }
                 }
