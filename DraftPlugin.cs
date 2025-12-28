@@ -2,8 +2,6 @@ using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using Il2CppInterop.Runtime.Injection;
-using UnityEngine;
-using TownOfUsDraft;
 
 namespace TownOfUsDraft
 {
@@ -17,16 +15,13 @@ namespace TownOfUsDraft
         {
             Instance = this;
             
-            // Rejestracja HUD (Wymagane)
+            // Rejestracja klasy HUD (wymagane dla IL2CPP)
             ClassInjector.RegisterTypeInIl2Cpp<DraftHud>();
             
+            // Aplikowanie patchy (w tym nowego HudPatch)
             Harmony.PatchAll();
             
-            var go = new GameObject("TownOfUsDraftHUD");
-            Object.DontDestroyOnLoad(go);
-            go.AddComponent<DraftHud>();
-            
-            Log.LogInfo("Draft Mode (Static) Loaded.");
+            Log.LogInfo("Draft Mode Loaded & Patched.");
         }
     }
 }

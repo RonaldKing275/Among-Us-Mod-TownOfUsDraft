@@ -1,44 +1,47 @@
 using HarmonyLib;
 using Hazel;
-using System.Collections.Generic;
+using InnerNet;
+using MiraAPI.Roles; 
+using UnityEngine;
+using AmongUs.GameOptions; 
 
 namespace TownOfUsDraft.Patches
 {
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
     public static class DraftNetworkPatch
     {
-        [HarmonyPrefix]
-        public static void Prefix(PlayerControl __instance, [HarmonyArgument(0)] byte callId, [HarmonyArgument(1)] MessageReader reader)
+        public const byte RPC_ROLE_SELECTED = 249; // Ktoś wybrał rolę
+        public const byte RPC_START_TURN = 251;    // Nowa tura (Host -> All)
+
+        public static void Postfix(PlayerControl __instance, byte callId, MessageReader reader)
         {
-            if (callId == 251) // Start Draft
-            {
-                int count = reader.ReadInt32();
-                // Opcjonalnie: pobierz listę, ale głównie chodzi o to, by nie crashowało
-                return;
-            }
-
-            if (callId == 250) // Turn Info
+            if (callId == RPC_ROLE_SELECTED)
             {
                 byte playerId = reader.ReadByte();
-                int optionCount = reader.ReadInt32();
-                List<string> options = new List<string>();
-                for(int i=0; i<optionCount; i++) options.Add(reader.ReadString());
-
-                DraftManager.OnTurnStarted(playerId, options);
-                return;
+                int roleTypeId = reader.ReadInt32();
+                PlayerControl target = Helpers.GetPlayerById(playerId);
+                if (target != null) DraftManager.ApplyRoleFromRpc(target, (RoleTypes)roleTypeId);
             }
-
-            if (callId == 249) // Select Role
+            else if (callId == RPC_START_TURN)
             {
-                byte playerId = reader.ReadByte();
-                string roleName = reader.ReadString();
-                DraftManager.OnPlayerPickedRole(playerId, roleName);
+                // Odbieramy: Kto teraz wybiera? Jakie ma opcje? Jaka to kategoria?
+                byte activePlayerId = reader.ReadByte();
+                string catName = reader.ReadString();
+                string op1 = reader.ReadString();
+                string op2 = reader.ReadString();
+                string op3 = reader.ReadString();
+
+                DraftManager.OnTurnStarted(activePlayerId, catName, new System.Collections.Generic.List<string>{op1, op2, op3});
             }
-            
-            if (callId == 252) // End Draft
-            {
-                DraftManager.OnDraftEnded();
-            }
+        }
+    }
+
+    public static class Helpers 
+    {
+        public static PlayerControl GetPlayerById(byte id)
+        {
+            foreach (var p in PlayerControl.AllPlayerControls) if (p.PlayerId == id) return p;
+            return null;
         }
     }
 }
