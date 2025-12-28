@@ -15,6 +15,8 @@ namespace TownOfUsDraft
         public static string CategoryTitle = "";
         public static List<string> MyOptions = new List<string>();
 
+        public static List<string> CurrentTurnOptions = new List<string>();
+
         // --- TIMER HOSTA (Szybkie przejście) ---
         public static bool HostTimerActive = false;
         private float _hostTimer = 0f;

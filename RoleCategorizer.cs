@@ -2,135 +2,182 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using MiraAPI.Roles;
-using TownOfUs.Roles;
-using System.Reflection;
+// Nie dodajemy using TownOfUs.Roles, żeby uniknąć błędów typów. Działamy na ogólnym ICustomRole.
 
 namespace TownOfUsDraft
 {
-    public enum DraftCategory { Crewmate, Support, Investigative, Killing, Power, Protective, Impostor, NeutralBenign, NeutralEvil, NeutralKilling, Unknown }
+    public enum RoleCategory 
+    { 
+        Crewmate, 
+        CrewSupport, 
+        CrewInvestigative, 
+        CrewKilling, 
+        CrewPower, 
+        CrewProtective, 
+        
+        Impostor, 
+        RandomImp, 
+        
+        NeutralBenign, 
+        NeutralEvil, 
+        NeutralKilling, 
+        
+        Unknown 
+    }
 
     public static class RoleCategorizer
     {
-        private static Dictionary<DraftCategory, List<string>> _cachedRoles;
-        private static object _roleOptionsInstance;
+        private static Dictionary<RoleCategory, List<ICustomRole>> _cachedRoles;
+        private static List<ICustomRole> _allValidRoles = new List<ICustomRole>();
 
         public static void InitializeRoles()
         {
-            _cachedRoles = new Dictionary<DraftCategory, List<string>>();
-            foreach (DraftCategory cat in System.Enum.GetValues(typeof(DraftCategory))) _cachedRoles[cat] = new List<string>();
+            _cachedRoles = new Dictionary<RoleCategory, List<ICustomRole>>();
+            _allValidRoles.Clear();
 
-            try {
-                var type = System.Type.GetType("TownOfUs.Options.RoleOptions, TownOfUsMira");
-                if (type != null) _roleOptionsInstance = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            } catch {}
+            foreach (RoleCategory cat in System.Enum.GetValues(typeof(RoleCategory))) 
+            {
+                if (!_cachedRoles.ContainsKey(cat))
+                    _cachedRoles[cat] = new List<ICustomRole>();
+            }
 
+            // Dostęp statyczny do listy ról (wg Twoich logów Instance nie istnieje)
             var allRoles = CustomRoleManager.AllRoles; 
 
-            foreach (var roleObj in allRoles)
+            if (allRoles == null) return;
+
+            foreach (var roleBehaviour in allRoles)
             {
-                if (roleObj is ICustomRole iRole)
+                // Rzutowanie RoleBehaviour -> ICustomRole
+                ICustomRole customRole = roleBehaviour as ICustomRole;
+                
+                // Jeśli to nie jest CustomRole, pomijamy (chyba że chcesz obsługiwać Vanilla)
+                if (customRole == null) continue;
+
+                // --- DETEKCJA PO NAZWIE KLASY ---
+                string fullType = customRole.ToString(); // np. "TownOfUs.Roles.Crewmate.MedicRole"
+                
+                // Wykrywanie kategorii z tekstu
+                RoleCategory cat = DetectCategoryFromText(fullType);
+
+                if (cat != RoleCategory.Unknown)
                 {
-                    string roleName = iRole.ToString();
-                    if (!IsRoleEnabledInConfig(roleName)) continue;
-
-                    if (roleObj is ITownOfUsRole touRole)
+                    if (!_cachedRoles[cat].Contains(customRole)) _cachedRoles[cat].Add(customRole);
+                    
+                    // Dodatkowo wrzucamy do worka Impostorów dla "RandomImp"
+                    if (cat == RoleCategory.Impostor)
                     {
-                        DraftCategory cat = MapTouAlignment(touRole.RoleAlignment);
-                        _cachedRoles[cat].Add(roleName);
+                        if (!_cachedRoles[RoleCategory.RandomImp].Contains(customRole)) 
+                            _cachedRoles[RoleCategory.RandomImp].Add(customRole);
                     }
-                    else
-                    {
-                        if (roleName.Contains("Impostor")) _cachedRoles[DraftCategory.Impostor].Add(roleName);
-                        else _cachedRoles[DraftCategory.Crewmate].Add(roleName);
-                    }
+                    
+                    _allValidRoles.Add(customRole);
                 }
             }
-            if (_cachedRoles[DraftCategory.Crewmate].Count == 0) _cachedRoles[DraftCategory.Crewmate].Add("Crewmate");
-            if (_cachedRoles[DraftCategory.Impostor].Count == 0) _cachedRoles[DraftCategory.Impostor].Add("Impostor");
-        }
-        
-        public static bool HasRoles(DraftCategory cat)
-        {
-             return _cachedRoles != null && _cachedRoles.ContainsKey(cat) && _cachedRoles[cat].Count > 0;
+            
+            if (DraftPlugin.Instance != null)
+                DraftPlugin.Instance.Log.LogInfo($"[Draft] Załadowano {_allValidRoles.Count} ról.");
         }
 
-        public static DraftCategory GetRandomCrewmateCategory()
+        public static List<string> GetRandomRoleNames(RoleCategory category, int count)
         {
-            var validCats = new List<DraftCategory> { 
-                DraftCategory.Support, DraftCategory.Investigative, 
-                DraftCategory.Killing, DraftCategory.Power, DraftCategory.Protective 
-            };
-            return validCats[Random.Range(0, validCats.Count)];
+            if (_cachedRoles == null || _cachedRoles.Count == 0) InitializeRoles();
+            
+            if (!_cachedRoles.ContainsKey(category)) return new List<string>();
+
+            var pool = _cachedRoles[category];
+            if (pool.Count == 0) return new List<string>();
+
+            return pool.OrderBy(x => Random.Range(0f, 1f))
+                       .Take(count)
+                       .Select(r => GetPrettyName(r)) // Zamiana obiektu na ładny string
+                       .ToList();
         }
 
-        private static bool IsRoleEnabledInConfig(string roleName)
+        public static ICustomRole GetRoleByName(string roleName)
         {
-            if (_roleOptionsInstance == null) return true;
-            try 
+            if (_allValidRoles.Count == 0) InitializeRoles();
+            
+            // 1. Szukamy w naszym cache
+            foreach (var role in _allValidRoles)
             {
-                string sanitizedName = roleName.Replace(" ", "");
-                var prop = _roleOptionsInstance.GetType().GetProperty(sanitizedName);
-                object optObj = null;
-                if (prop != null) optObj = prop.GetValue(_roleOptionsInstance);
-                else {
-                    var field = _roleOptionsInstance.GetType().GetField(sanitizedName + "Options");
-                    if (field != null) optObj = field.GetValue(_roleOptionsInstance);
-                }
-
-                if (optObj != null)
+                if (GetPrettyName(role) == roleName)
+                    return role;
+            }
+            
+            // 2. Jeśli nie ma w cache, szukamy ręcznie w CustomRoleManager (bo GetRole(string) nie istnieje)
+            var allRoles = CustomRoleManager.AllRoles;
+            if (allRoles != null)
+            {
+                foreach (var rb in allRoles)
                 {
-                    var chanceProp = optObj.GetType().GetProperty("SpawnChance") ?? optObj.GetType().GetProperty("Value");
-                    if (chanceProp != null)
-                    {
-                        float val = System.Convert.ToSingle(chanceProp.GetValue(optObj));
-                        if (val <= 0) return false; 
-                    }
+                    var r = rb as ICustomRole;
+                    if (r != null && GetPrettyName(r) == roleName)
+                        return r;
                 }
-            } catch {}
-            return true;
+            }
+                
+            return null;
         }
 
-        public static List<string> GetRandomRoles(DraftCategory category, int count)
+        // Metoda czyszcząca nazwę (np. "TownOfUs.Roles.MedicRole" -> "Medic")
+        // Używamy tego zamiast .Name, którego brakuje
+        public static string GetPrettyName(ICustomRole role)
         {
-            if (_cachedRoles == null) InitializeRoles();
-            if (!HasRoles(category)) 
+            if (role == null) return "Unknown";
+            
+            string raw = role.ToString();
+            
+            // Bierzemy ostatni człon po kropce
+            if (raw.Contains("."))
             {
-                if(category != DraftCategory.Impostor) return GetRandomRoles(DraftCategory.Crewmate, count);
-                return new List<string>{"Impostor"};
+                var parts = raw.Split('.');
+                raw = parts[parts.Length - 1];
             }
-
-            List<string> pool = new List<string>(_cachedRoles[category]);
-            List<string> picked = new List<string>();
-            for (int i = 0; i < count; i++)
+            
+            // Usuwamy słowo "Role" z końca, jeśli jest
+            if (raw.EndsWith("Role"))
             {
-                if (pool.Count == 0) pool = new List<string>(_cachedRoles[category]);
-                int idx = Random.Range(0, pool.Count);
-                picked.Add(pool[idx]);
-                pool.RemoveAt(idx);
+                raw = raw.Substring(0, raw.Length - 4);
             }
-            return picked;
+            
+            return raw;
         }
 
-        private static DraftCategory MapTouAlignment(RoleAlignment alignment)
+        private static RoleCategory DetectCategoryFromText(string typeName)
         {
-            switch (alignment)
+            // Analiza stringa np. "TownOfUs.Roles.Crewmate.Support.MedicRole"
+            
+            if (typeName.Contains("Crewmate"))
             {
-                case RoleAlignment.CrewmateSupport: return DraftCategory.Support;
-                case RoleAlignment.CrewmateInvestigative: return DraftCategory.Investigative;
-                case RoleAlignment.CrewmateKilling: return DraftCategory.Killing;
-                case RoleAlignment.CrewmatePower: return DraftCategory.Power;
-                case RoleAlignment.CrewmateProtective: return DraftCategory.Protective;
-
-                case RoleAlignment.ImpostorKilling: return DraftCategory.Impostor;
-                case RoleAlignment.ImpostorConcealing: return DraftCategory.Impostor;
-                case RoleAlignment.ImpostorSupport: return DraftCategory.Impostor;
-                case RoleAlignment.ImpostorPower: return DraftCategory.Impostor;
-
-                case RoleAlignment.NeutralBenign: return DraftCategory.NeutralBenign;
-                case RoleAlignment.NeutralEvil: return DraftCategory.NeutralEvil;
-                case RoleAlignment.NeutralKilling: return DraftCategory.NeutralKilling;
-                default: return DraftCategory.Crewmate;
+                if (typeName.Contains("Support")) return RoleCategory.CrewSupport;
+                if (typeName.Contains("Invest")) return RoleCategory.CrewInvestigative;
+                if (typeName.Contains("Killing") || typeName.Contains("Military")) return RoleCategory.CrewKilling;
+                if (typeName.Contains("Power")) return RoleCategory.CrewPower;
+                if (typeName.Contains("Protect") || typeName.Contains("Medic")) return RoleCategory.CrewProtective;
+                
+                return RoleCategory.Crewmate; 
             }
+
+            if (typeName.Contains("Impostor"))
+            {
+                return RoleCategory.Impostor; 
+            }
+
+            if (typeName.Contains("Neutral"))
+            {
+                if (typeName.Contains("Benign")) return RoleCategory.NeutralBenign;
+                if (typeName.Contains("Evil")) return RoleCategory.NeutralEvil;
+                if (typeName.Contains("Killing")) return RoleCategory.NeutralKilling;
+                return RoleCategory.NeutralBenign; 
+            }
+
+            // Obsługa Vanilli (jeśli MiraAPI je zwraca pod takimi nazwami)
+            if (typeName.Contains("Engineer") || typeName.Contains("Scientist")) return RoleCategory.CrewSupport;
+            if (typeName.Contains("Sheriff")) return RoleCategory.CrewKilling;
+            if (typeName.Contains("Shapeshifter")) return RoleCategory.Impostor;
+
+            return RoleCategory.Unknown;
         }
     }
 }
