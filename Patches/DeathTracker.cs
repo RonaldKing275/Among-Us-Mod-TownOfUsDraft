@@ -29,13 +29,33 @@ namespace TownOfUsDraft.Patches
             
             // Bierzemy max 2 pierwsze osoby z poprzedniej gry
             var luckyOnes = CurrentGameRound1Deaths.Take(2).ToList();
-            foreach(var id in luckyOnes) ShieldedPlayers.Add(id);
+            foreach(var id in luckyOnes) 
+            {
+                ShieldedPlayers.Add(id);
+                var player = GetPlayerById(id);
+                if (player != null)
+                {
+                    DraftPlugin.Instance.Log.LogInfo($"[PityShield] Tarcza aktywna dla: {player.Data.PlayerName} (ID: {id})");
+                }
+            }
 
-            if (ShieldedPlayers.Count > 0)
-                DraftPlugin.Instance.Log.LogInfo("[PityShield] Tarcza aktywna dla ID: " + string.Join(", ", ShieldedPlayers));
+            if (ShieldedPlayers.Count == 0)
+            {
+                DraftPlugin.Instance.Log.LogInfo("[PityShield] Brak graczy z tarczą w tej rundzie.");
+            }
 
             CurrentGameRound1Deaths.Clear();
             _isRoundOne = true;
+        }
+        
+        // Helper do znajdowania gracza
+        private static PlayerControl GetPlayerById(byte id)
+        {
+            foreach (var p in PlayerControl.AllPlayerControls)
+            {
+                if (p.PlayerId == id) return p;
+            }
+            return null;
         }
 
         // --- 2. MEETING: Koniec tarczy ---

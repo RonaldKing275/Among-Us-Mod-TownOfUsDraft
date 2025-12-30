@@ -15,13 +15,20 @@ namespace TownOfUsDraft
         {
             Instance = this;
             
+            // Inicjalizacja konfiguracji
+            TouConfigAdapter.InitializeConfig(Config);
+            
             // Rejestracja klasy HUD (wymagane dla IL2CPP)
             ClassInjector.RegisterTypeInIl2Cpp<DraftHud>();
             
             // Aplikowanie patchy (w tym nowego HudPatch)
             Harmony.PatchAll();
             
-            Log.LogInfo("Draft Mode Loaded & Patched.");
+            Log.LogInfo("====================================");
+            Log.LogInfo("Town Of Us - Draft Mode v1.0.0");
+            Log.LogInfo($"Draft Mode: {(TouConfigAdapter.EnableDraftMode.Value ? "ENABLED" : "DISABLED")}");
+            Log.LogInfo($"Draft Timeout: {TouConfigAdapter.DraftTimeout.Value}s");
+            Log.LogInfo("====================================");
         }
     }
 }

@@ -18,9 +18,9 @@ namespace TownOfUsDraft.Patches
             if (callId == RPC_ROLE_SELECTED)
             {
                 byte playerId = reader.ReadByte();
-                int roleTypeId = reader.ReadInt32();
+                string roleName = reader.ReadString();
                 PlayerControl target = Helpers.GetPlayerById(playerId);
-                if (target != null) DraftManager.ApplyRoleFromRpc(target, (RoleTypes)roleTypeId);
+                if (target != null) DraftManager.ApplyRoleFromRpc(target, roleName);
             }
             else if (callId == RPC_START_TURN)
             {

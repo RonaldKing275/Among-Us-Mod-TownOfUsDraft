@@ -1,5 +1,4 @@
 using HarmonyLib;
-using TownOfUs.Roles; 
 
 namespace TownOfUsDraft.Patches
 {
@@ -9,8 +8,12 @@ namespace TownOfUsDraft.Patches
         [HarmonyPriority(Priority.First)]
         public static bool Prefix()
         {
-            DraftPlugin.Instance.Log.LogInfo("!!! BLOKADA TOU: SelectRoles Zatrzymane !!!");
-            return false; // Stop!
+            if (BlockTouGenerationPatch.BlockGeneration)
+            {
+                DraftPlugin.Instance.Log.LogInfo("!!! BLOKADA: SelectRoles Zatrzymane (Draft Mode) !!!");
+                return false;
+            }
+            return true;
         }
     }
 }
