@@ -24,7 +24,9 @@ namespace TownOfUsDraft
         public static byte CurrentTurnPlayerId = 255;
         // NOWE POLE: Opcje aktualnego gracza (dla auto-picka)
         public static List<string> CurrentTurnOptions = new List<string>(); 
-        private const float MAX_TURN_TIME = 20.0f; 
+        
+        // Timeout z configa
+        private float MaxTurnTime => TouConfigAdapter.DraftTimeout?.Value ?? 20.0f; 
 
         private bool _wasPaused = false;
 
@@ -48,7 +50,8 @@ namespace TownOfUsDraft
                 if (CurrentTurnPlayerId != 255)
                 {
                     TurnWatchdogTimer += Time.unscaledDeltaTime;
-                    if (TurnWatchdogTimer >= MAX_TURN_TIME)
+                    
+                    if (TurnWatchdogTimer >= MaxTurnTime)
                     {
                         DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Auto-pick.");
                         TurnWatchdogTimer = 0f;
@@ -84,9 +87,49 @@ namespace TownOfUsDraft
             if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = true;
         }
 
+        // Style cache - tworzenie raz zamiast w każdej klatce
+        private GUIStyle _titleStyle;
+        private GUIStyle _btnStyle;
+        private GUIStyle _waitStyle;
+        private GUIStyle _processingStyle;
+
+        private void InitializeStyles()
+        {
+            if (_titleStyle == null)
+            {
+                _titleStyle = new GUIStyle(GUI.skin.label) 
+                { 
+                    alignment = TextAnchor.MiddleCenter, 
+                    fontSize = 36, 
+                    fontStyle = FontStyle.Bold 
+                };
+                _titleStyle.normal.textColor = Color.white;
+
+                _btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 24 };
+
+                _waitStyle = new GUIStyle(GUI.skin.label) 
+                { 
+                    alignment = TextAnchor.MiddleCenter, 
+                    fontSize = 48, 
+                    fontStyle = FontStyle.Bold 
+                };
+                _waitStyle.normal.textColor = Color.yellow;
+
+                _processingStyle = new GUIStyle(GUI.skin.label) 
+                { 
+                    alignment = TextAnchor.MiddleCenter, 
+                    fontSize = 32, 
+                    fontStyle = FontStyle.Bold 
+                };
+                _processingStyle.normal.textColor = Color.gray;
+            }
+        }
+
         private void OnGUI()
         {
             if (!IsDraftActive) return;
+
+            InitializeStyles();
 
             GUI.depth = -9999;
             GUI.backgroundColor = new Color(0.05f, 0.05f, 0.1f, 0.98f); 
@@ -94,9 +137,7 @@ namespace TownOfUsDraft
 
             if (ActiveTurnPlayerId == 255)
             {
-                GUIStyle processingStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 32, fontStyle = FontStyle.Bold };
-                processingStyle.normal.textColor = Color.gray;
-                GUI.Label(new Rect(0, Screen.height/2 - 50, Screen.width, 100), "FINALIZACJA DRAFTU...", processingStyle);
+                GUI.Label(new Rect(0, Screen.height/2 - 50, Screen.width, 100), "FINALIZACJA DRAFTU...", _processingStyle);
                 return;
             }
 
@@ -106,33 +147,28 @@ namespace TownOfUsDraft
             foreach(var p in PlayerControl.AllPlayerControls) 
                 if(p.PlayerId == ActiveTurnPlayerId) activeName = p.Data.PlayerName;
 
-            GUIStyle titleStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
-            titleStyle.normal.textColor = Color.white;
-
-            string timeLeft = "";
-            if (AmongUsClient.Instance.AmHost) 
-                timeLeft = $" ({Mathf.Ceil(MAX_TURN_TIME - TurnWatchdogTimer)}s)";
+            // Timer widoczny dla wszystkich graczy (synchronizowany przez RPC)
+            string timeLeft = $" ({Mathf.Ceil(MaxTurnTime - TurnWatchdogTimer)}s)";
 
             if (isMyTurn)
             {
-                GUI.Label(new Rect(0, 50, Screen.width, 50), $"TWOJA TURA: {CategoryTitle}{timeLeft}", titleStyle);
+                GUI.Label(new Rect(0, 50, Screen.width, 50), $"TWOJA TURA: {CategoryTitle}{timeLeft}", _titleStyle);
                 
                 float w = 600;
                 float x = (Screen.width - w) / 2;
-                GUIStyle btnStyle = new GUIStyle(GUI.skin.button) { fontSize = 24 };
 
                 if (MyOptions != null)
                 {
                     for(int i=0; i<MyOptions.Count; i++)
                     {
                         string display = MyOptions[i].Replace("Role", "");
-                        if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, btnStyle))
+                        if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, _btnStyle))
                         {
                             DraftManager.OnPlayerSelectedRole(MyOptions[i]);
                         }
                     }
                     GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
-                    if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", btnStyle))
+                    if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", _btnStyle))
                     {
                         DraftManager.OnRandomRoleSelected();
                     }
@@ -140,11 +176,20 @@ namespace TownOfUsDraft
             }
             else
             {
-                GUIStyle waitStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = 48, fontStyle = FontStyle.Bold };
-                waitStyle.normal.textColor = Color.yellow;
-                
                 string dots = ""; int t = (int)(Time.unscaledTime * 2) % 4; for(int i=0; i<t; i++) dots += ".";
-                GUI.Label(new Rect(0, Screen.height/2 - 100, Screen.width, 200), $"WYBIERA GRACZ: {activeName}{dots}", waitStyle);
+                GUI.Label(new Rect(0, Screen.height/2 - 100, Screen.width, 100), $"WYBIERA GRACZ: {activeName}{dots}", _waitStyle);
+                
+                // Pokazujemy kategorię, którą wybiera aktywny gracz
+                if (!string.IsNullOrEmpty(CategoryTitle))
+                {
+                    GUIStyle catStyle = new GUIStyle(GUI.skin.label) 
+                    { 
+                        alignment = TextAnchor.MiddleCenter, 
+                        fontSize = 24 
+                    };
+                    catStyle.normal.textColor = Color.cyan;
+                    GUI.Label(new Rect(0, Screen.height/2 + 20, Screen.width, 50), $"Kategoria: {CategoryTitle}", catStyle);
+                }
             }
         }
     }

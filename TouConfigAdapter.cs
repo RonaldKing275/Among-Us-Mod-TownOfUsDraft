@@ -1,35 +1,84 @@
 using AmongUs.GameOptions;
 using System.Reflection;
 using UnityEngine;
-using MiraAPI.GameOptions; // Sprawdź czy to jest odpowiedni namespace dla opcji
+using MiraAPI.GameOptions;
+using BepInEx.Configuration;
 
 namespace TownOfUsDraft
 {
     public static class TouConfigAdapter
     {
-        // Ta metoda przeszukuje opcje gry, żeby znaleźć ustawione limity
+        // Config entries - inicjalizowane przez DraftPlugin
+        public static ConfigEntry<int> CrewSupport;
+        public static ConfigEntry<int> CrewProtective;
+        public static ConfigEntry<int> CrewInvestigative;
+        public static ConfigEntry<int> CrewKilling;
+        public static ConfigEntry<int> CrewPower;
+        public static ConfigEntry<int> NeutralKilling;
+        public static ConfigEntry<int> NeutralEvil;
+        public static ConfigEntry<int> NeutralBenign;
+        public static ConfigEntry<int> RandomNeutral;
+        public static ConfigEntry<bool> EnableDraftMode;
+        public static ConfigEntry<float> DraftTimeout;
+
+        public static void InitializeConfig(ConfigFile config)
+        {
+            EnableDraftMode = config.Bind("General", "EnableDraftMode", true, 
+                "Włącz/Wyłącz Draft Mode dla Town of Us");
+
+            DraftTimeout = config.Bind("General", "DraftTimeout", 20f, 
+                "Maksymalny czas (w sekundach) na wybór roli podczas draftu");
+
+            CrewSupport = config.Bind("Roles", "CrewSupport", 2, 
+                "Liczba ról Crew Support w drafcie");
+
+            CrewProtective = config.Bind("Roles", "CrewProtective", 1, 
+                "Liczba ról Crew Protective w drafcie");
+
+            CrewInvestigative = config.Bind("Roles", "CrewInvestigative", 2, 
+                "Liczba ról Crew Investigative w drafcie");
+
+            CrewKilling = config.Bind("Roles", "CrewKilling", 1, 
+                "Liczba ról Crew Killing w drafcie");
+
+            CrewPower = config.Bind("Roles", "CrewPower", 0, 
+                "Liczba ról Crew Power w drafcie");
+
+            NeutralKilling = config.Bind("Roles", "NeutralKilling", 1, 
+                "Liczba ról Neutral Killing w drafcie");
+
+            NeutralEvil = config.Bind("Roles", "NeutralEvil", 1, 
+                "Liczba ról Neutral Evil w drafcie");
+
+            NeutralBenign = config.Bind("Roles", "NeutralBenign", 0, 
+                "Liczba ról Neutral Benign w drafcie");
+
+            RandomNeutral = config.Bind("Roles", "RandomNeutral", 0, 
+                "Liczba losowych ról Neutral w drafcie");
+
+            DraftPlugin.Instance.Log.LogInfo("[Config] Konfiguracja Draft Mode załadowana.");
+        }
+
+        // Ta metoda zwraca wartość z configa
         public static int GetRoleCount(string optionName, int defaultValue = 0)
         {
-            // UWAGA: To jest heurystyka. Przeszukujemy listę wszystkich opcji.
-            // W MiraAPI opcje są często w GameOptionsManager lub CustomOption.AllOptions
-            
-            // Przykład szukania w MiraAPI (zależnie od implementacji):
-            // Musisz sprawdzić w logach jakie są dostępne opcje, jeśli to nie zadziała.
-            
-            /* PONIŻEJ KOD TYMCZASOWY - ZAKŁADA STAŁE WARTOŚCI DO TESTÓW */
-            /* DOCELOWO: Tu musi być kod czytający z API TOU */
-            
-            // Na potrzeby testów DRAFTU ustawiamy "sztywne" wartości, które normalnie byłyby w configu
-            // Możesz to zmienić na czytanie z pliku konfiguracyjnego BepInEx
-            
-            if (optionName == "Support") return 2;
-            if (optionName == "Protective") return 1;
-            if (optionName == "Investigative") return 2;
-            if (optionName == "Killing") return 1;
-            if (optionName == "NeutralKilling") return 1;
-            if (optionName == "NeutralEvil") return 1;
-            
-            return defaultValue;
+            switch (optionName.ToLower())
+            {
+                case "support": return CrewSupport?.Value ?? defaultValue;
+                case "protective": return CrewProtective?.Value ?? defaultValue;
+                case "investigative": return CrewInvestigative?.Value ?? defaultValue;
+                case "killing": return CrewKilling?.Value ?? defaultValue;
+                case "power": return CrewPower?.Value ?? defaultValue;
+                case "neutralkilling":
+                case "neutral killing": return NeutralKilling?.Value ?? defaultValue;
+                case "neutralevil":
+                case "neutral evil": return NeutralEvil?.Value ?? defaultValue;
+                case "neutralbenign":
+                case "neutral benign": return NeutralBenign?.Value ?? defaultValue;
+                case "randomneutral":
+                case "random neutral": return RandomNeutral?.Value ?? defaultValue;
+                default: return defaultValue;
+            }
         }
     }
 }

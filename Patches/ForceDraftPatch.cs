@@ -23,24 +23,25 @@ namespace TownOfUsDraft.Patches
         }
 
         // 2. START DRAFTU
-        // Skoro wyżej wymusiliśmy Crewmate'a, gra na 100% wywoła BeginCrewmate.
-        // Tutaj odpalamy nasze UI.
         [HarmonyPatch(typeof(IntroCutscene), "BeginCrewmate")]
         public static class ForceDraftCrewmatePatch
         {
             public static void Postfix()
             {
+                if (!TouConfigAdapter.EnableDraftMode.Value) return;
+
                 DraftPlugin.Instance.Log.LogInfo("[FORCE DRAFT] Wykryto Intro! Uruchamiam Draft...");
                 DraftManager.StartDraft();
             }
         }
 
-        // Zostawiamy to tylko awaryjnie, gdyby coś poszło nie tak z neutralizacją.
         [HarmonyPatch(typeof(IntroCutscene), "BeginImpostor")]
         public static class ForceDraftImpostorPatch
         {
             public static void Postfix()
             {
+                if (!TouConfigAdapter.EnableDraftMode.Value) return;
+
                 DraftPlugin.Instance.Log.LogInfo("[FORCE DRAFT] Wykryto Intro (Imp)! Uruchamiam Draft...");
                 DraftManager.StartDraft();
             }
