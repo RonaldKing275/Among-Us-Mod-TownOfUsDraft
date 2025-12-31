@@ -37,16 +37,18 @@ namespace TownOfUsDraft
 
         public static void StartDraft()
         {
-            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU (COMPILATION FIX) ---");
-            LogAllDetectedOptions(); 
-
-            // Włączamy blokadę standardowego rozdawania ról
-            TownOfUsDraft.Patches.BlockTouGenerationPatch.BlockGeneration = true;
+            DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU ---");
+            
+            // Włączamy blokadę - patch automatycznie ustawi TouRoleManagerPatches.ReplaceRoleManager = true
+            TownOfUsDraft.Patches.DraftRoleOverridePatch.BlockGeneration = true;
+            
+            // Logi debugowania zostały usunięte - było zbyt dużo spamu
 
             PendingRoles.Clear();
             _globalUsedRoles.Clear();
             TurnQueue.Clear();
             HostDraftAssignments.Clear();
+            _rolesApplied = false; // Reset flagi aplikacji ról
 
             if (!AmongUsClient.Instance.AmHost) return;
 
@@ -58,14 +60,26 @@ namespace TownOfUsDraft
                 .OrderBy(p => rng.Next())
                 .ToList();
 
-            List<RoleCategory> draftPool = BuildDraftPool(players.Count, rng);
+            DraftPlugin.Instance.Log.LogInfo($"[StartDraft] Liczba graczy: {players.Count}");
 
+            // NOWE: Pobierz kategorie ze Slot1-15 zamiast BuildDraftPool()
+            List<RoleCategory> draftPool = GetSlotCategoriesFromConfig(players.Count);
+            
+            // Jeśli nie udało się odczytać z configu, użyj fallback
+            if (draftPool == null || draftPool.Count == 0)
+            {
+                DraftPlugin.Instance.Log.LogWarning("[StartDraft] Nie udało się odczytać Slotów z configu! Używam fallback.");
+                draftPool = BuildDraftPool(players.Count, rng);
+            }
+
+            DraftPlugin.Instance.Log.LogInfo($"[StartDraft] Kategorie dla graczy:");
             for (int i = 0; i < players.Count; i++)
             {
                 var p = players[i];
                 RoleCategory cat = (i < draftPool.Count) ? draftPool[i] : RoleCategory.CrewSupport;
                 HostDraftAssignments[p.PlayerId] = cat;
                 TurnQueue.Enqueue(p.PlayerId);
+                DraftPlugin.Instance.Log.LogInfo($"  Gracz {i+1} ({p.Data.PlayerName}): {cat} (Slot{i+1})");
             }
 
             ProcessNextTurn(rng);
@@ -159,29 +173,41 @@ namespace TownOfUsDraft
 
         private static IEnumerator FinalizeDraftRoutine()
         {
-            DraftPlugin.Instance.Log.LogInfo("[Draft] Czekam na stabilizację gry...");
+            DraftPlugin.Instance.Log.LogInfo("=== DRAFT: Draft zakończony! Role będą zaaplikowane w ShowRole Prefix ===");
             
             Time.timeScale = 1f;
             if (PlayerControl.LocalPlayer != null) PlayerControl.LocalPlayer.moveable = true;
 
-            TownOfUsDraft.Patches.BlockTouGenerationPatch.BlockGeneration = false;
+            // Krótkie czekanie
+            yield return new WaitForSeconds(0.2f);
 
-            yield return new WaitForSeconds(1.0f);
+            DraftPlugin.Instance.Log.LogInfo($"=== DRAFT: {PendingRoles.Count} ról gotowych do aplikacji w ShowRole ===");
+
+            // Poinformuj ForceDraftPatch że Draft się zakończył
+            // To odblokuje Intro, a role będą zaaplikowane w ShowRole Prefix
+            TownOfUsDraft.Patches.ForceDraftPatch.OnDraftCompleted();
             
-            int timeout = 0;
-            while ((HudManager.Instance == null || HudManager.Instance.KillButton == null) && timeout < 50)
+            yield return null;
+        }
+
+        public static bool _rolesApplied = false; // Flaga żeby nie aplikować wiele razy (publiczna dla ForceDraftPatch)
+
+        // NAJLEPSZA METODA: Aplikuj role W IntroCutscene.Start (DOKŁADNIE przed ShowRole!)
+        public static void ApplyDraftRolesInIntroStart()
+        {
+            if (_rolesApplied)
             {
-                yield return new WaitForSeconds(0.1f);
-                timeout++;
+                DraftPlugin.Instance.Log.LogInfo("      [ApplyInIntroStart] Role już zaaplikowane, pomijam");
+                return;
             }
 
-            if (timeout >= 50)
-            {
-                DraftPlugin.Instance.Log.LogWarning("[Draft] Timeout podczas czekania na HudManager!");
-            }
-
-            DraftPlugin.Instance.Log.LogInfo($"[Draft] Aplikowanie {PendingRoles.Count} ról.");
-
+            DraftPlugin.Instance.Log.LogInfo("      [ApplyInIntroStart] ═══════════════════════════════════");
+            DraftPlugin.Instance.Log.LogInfo("      [ApplyInIntroStart] APLIKOWANIE RÓL W INTRO.START!");
+            DraftPlugin.Instance.Log.LogInfo("      [ApplyInIntroStart] (Przed ShowRole - to zagwarantuje sukces)");
+            DraftPlugin.Instance.Log.LogInfo($"      [ApplyInIntroStart] Liczba ról: {PendingRoles.Count}");
+            DraftPlugin.Instance.Log.LogInfo("      [ApplyInIntroStart] ═══════════════════════════════════");
+            
+            // Aplikuj role NATYCHMIAST
             int successCount = 0;
             foreach (var kvp in PendingRoles)
             {
@@ -191,28 +217,41 @@ namespace TownOfUsDraft
                     try 
                     { 
                         var roleBehaviour = kvp.Value;
-                        var roleName = (roleBehaviour as UnityEngine.Object)?.name ?? "Unknown";
+                        var roleName = roleBehaviour.GetType().Name.Replace("Role", "");
+                        var roleId = (int)roleBehaviour.Role;
                         
-                        // Użyj MiraAPI extension method - trzeba cast do proper type
-                        if (roleBehaviour != null)
-                        {
-                            player.Data.Role.Role = roleBehaviour.Role;
-                            player.Data.Role.TeamType = roleBehaviour.TeamType;
-                            RoleManager.Instance.SetRole(player, roleBehaviour.Role);
-                        }
+                        DraftPlugin.Instance.Log.LogInfo($"      → [{successCount+1}/{PendingRoles.Count}] {roleName} (RoleID:{roleId}) → {player.Data.PlayerName}");
+                        
+                        // KLUCZOWE: Ustaw rolę przez RpcSetRole
+                        // MiraAPI/TOU automatycznie zainicjalizuje komponenty
+                        // Ponieważ jesteśmy W Start (przed ShowRole), role będą świeże!
+                        player.RpcSetRole(roleBehaviour.Role);
                         
                         successCount++;
-                        DraftPlugin.Instance.Log.LogInfo($"[Draft] Przypisano '{roleName}' dla {player.Data.PlayerName}");
+                        DraftPlugin.Instance.Log.LogInfo($"      ✓ SUKCES: {roleName} → {player.Data.PlayerName}");
                     } 
                     catch (System.Exception e) 
                     { 
-                        DraftPlugin.Instance.Log.LogError($"[Draft Apply Error] {player.Data.PlayerName}: {e.Message}"); 
+                        DraftPlugin.Instance.Log.LogError($"      ✗ BŁĄD dla {player.Data.PlayerName}: {e.Message}"); 
                     }
+                }
+                else
+                {
+                    DraftPlugin.Instance.Log.LogWarning($"      ⚠ Gracz {kvp.Key} nie znaleziony lub disconnected/dead");
                 }
             }
 
-            DraftPlugin.Instance.Log.LogInfo($"[Draft] Zakończono! Przypisano {successCount}/{PendingRoles.Count} ról.");
+            DraftPlugin.Instance.Log.LogInfo($"      [ApplyInIntroStart] ═══════════════════════════════════");
+            DraftPlugin.Instance.Log.LogInfo($"      [ApplyInIntroStart] ZAKOŃCZONO: {successCount}/{PendingRoles.Count} ról zaaplikowanych!");
+            DraftPlugin.Instance.Log.LogInfo($"      [ApplyInIntroStart] ═══════════════════════════════════");
+            
+            // KRYTYCZNE: Przywróć flagę TOU żeby mogło obsłużyć ShowRole!
+            TownOfUsDraft.Patches.DraftRoleOverridePatch.BlockGeneration = false;
+            TownOfUsDraft.Patches.DraftRoleOverridePatch.SetTouReplaceRoleManagerFlag(false);
+            DraftPlugin.Instance.Log.LogInfo("      → TOU odblokowane! ShowRole pokaże role z Draftu!");
+            
             PendingRoles.Clear();
+            _rolesApplied = true;
         }
 
         // --- Odczyt opcji z GameOptionsManager ---
@@ -267,6 +306,119 @@ namespace TownOfUsDraft
             return 0;
         }
 
+        // NOWA FUNKCJA: Odczyt Slot1-15 z TOU-Mira RoleOptions
+        private static List<RoleCategory> GetSlotCategoriesFromConfig(int playerCount)
+        {
+            try
+            {
+                // Znajdź MiraAPI assembly
+                var miraApiAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "MiraAPI");
+                    
+                if (miraApiAssembly == null)
+                {
+                    DraftPlugin.Instance.Log.LogWarning("[GetSlotCategories] MiraAPI assembly nie znalezione!");
+                    return null;
+                }
+
+                // Znajdź TownOfUsMira assembly
+                var touAssembly = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
+                
+                if (touAssembly == null)
+                {
+                    DraftPlugin.Instance.Log.LogWarning("[GetSlotCategories] TownOfUsMira assembly nie znalezione!");
+                    return null;
+                }
+
+                // Znajdź OptionGroupSingleton<T>
+                var optionGroupSingletonType = miraApiAssembly.GetTypes()
+                    .FirstOrDefault(t => t.Name == "OptionGroupSingleton`1");
+                    
+                if (optionGroupSingletonType == null)
+                {
+                    DraftPlugin.Instance.Log.LogWarning("[GetSlotCategories] OptionGroupSingleton<> nie znaleziony!");
+                    return null;
+                }
+
+                // Znajdź RoleOptions
+                var roleOptionsType = touAssembly.GetType("TownOfUs.Options.RoleOptions");
+                if (roleOptionsType == null)
+                {
+                    DraftPlugin.Instance.Log.LogWarning("[GetSlotCategories] RoleOptions nie znaleziony!");
+                    return null;
+                }
+
+                // Utwórz OptionGroupSingleton<RoleOptions>
+                var concreteType = optionGroupSingletonType.MakeGenericType(roleOptionsType);
+                var instanceProp = concreteType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+                
+                if (instanceProp == null)
+                {
+                    DraftPlugin.Instance.Log.LogWarning("[GetSlotCategories] Instance property nie znalezione!");
+                    return null;
+                }
+
+                // Pobierz instancję RoleOptions
+                var roleOptionsInstance = instanceProp.GetValue(null);
+                if (roleOptionsInstance == null)
+                {
+                    DraftPlugin.Instance.Log.LogWarning("[GetSlotCategories] RoleOptions Instance jest null!");
+                    return null;
+                }
+
+                DraftPlugin.Instance.Log.LogInfo($"[GetSlotCategories] ✓ Pobrano RoleOptions Instance! Odczytywanie slotów 1-{playerCount}...");
+
+                List<RoleCategory> categories = new List<RoleCategory>();
+
+                // Odczytaj Slot1 do SlotN (N = liczba graczy)
+                for (int slotNum = 1; slotNum <= playerCount && slotNum <= 15; slotNum++)
+                {
+                    string slotName = $"Slot{slotNum}";
+                    var slotProp = roleOptionsType.GetProperty(slotName, BindingFlags.Public | BindingFlags.Instance);
+                    
+                    if (slotProp == null)
+                    {
+                        DraftPlugin.Instance.Log.LogWarning($"[GetSlotCategories] {slotName} nie znaleziony!");
+                        categories.Add(RoleCategory.CommonCrew); // Fallback
+                        continue;
+                    }
+
+                    var slotObject = slotProp.GetValue(roleOptionsInstance);
+                    if (slotObject == null)
+                    {
+                        DraftPlugin.Instance.Log.LogWarning($"[GetSlotCategories] {slotName} jest null!");
+                        categories.Add(RoleCategory.CommonCrew);
+                        continue;
+                    }
+
+                    // Pobierz .Value (index kategorii 0-24)
+                    var valueProp = slotObject.GetType().GetProperty("Value");
+                    if (valueProp == null)
+                    {
+                        DraftPlugin.Instance.Log.LogWarning($"[GetSlotCategories] {slotName}.Value nie znaleziony!");
+                        categories.Add(RoleCategory.CommonCrew);
+                        continue;
+                    }
+
+                    int categoryIndex = (int)valueProp.GetValue(slotObject);
+                    RoleCategory category = RoleCategorizer.IndexToCategory(categoryIndex);
+                    
+                    categories.Add(category);
+                    DraftPlugin.Instance.Log.LogInfo($"[GetSlotCategories]   {slotName}: Index {categoryIndex} → {category}");
+                }
+
+                DraftPlugin.Instance.Log.LogInfo($"[GetSlotCategories] ✓ Odczytano {categories.Count} kategorii ze Slotów!");
+                return categories;
+            }
+            catch (System.Exception ex)
+            {
+                DraftPlugin.Instance.Log.LogError($"[GetSlotCategories] Exception: {ex.Message}\n{ex.StackTrace}");
+                return null;
+            }
+        }
+
+        // STARA FUNKCJA (fallback) - używana gdy nie udało się odczytać ze Slotów
         private static List<RoleCategory> BuildDraftPool(int playerCount, System.Random rng)
         {
             List<RoleCategory> pool = new List<RoleCategory>();
@@ -602,7 +754,8 @@ namespace TownOfUsDraft
             DraftPlugin.Instance.Log.LogInfo($"[GetRoles] Znaleziono {list.Count} dostępnych ról TOU-Mira");
             return list;
         }
-        private static PlayerControl GetPlayerById(byte id) { foreach (var p in PlayerControl.AllPlayerControls) if (p.PlayerId == id) return p; return null; }
+        // NOWA FUNKCJA: Pełna inicjalizacja roli przez TOU-Mira API
+        public static PlayerControl GetPlayerById(byte id) { foreach (var p in PlayerControl.AllPlayerControls) if (p.PlayerId == id) return p; return null; }
         private static string FormatCategoryName(RoleCategory c) => c.ToString().Replace("Random","").Replace("Crew","Crewmate ");
         private static void SendStartTurnRpc(byte playerId, string cat, List<string> opts) {
             MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, (byte)251, SendOption.Reliable, -1);
@@ -1807,6 +1960,105 @@ namespace TownOfUsDraft
                                 {
                                     DraftPlugin.Instance.Log.LogWarning($"[DEBUG]   ✗ Błąd odczytu property {prop.Name}: {ex.Message}");
                                 }
+                            }
+                            
+                            DraftPlugin.Instance.Log.LogInfo("[DEBUG] ========================================");
+                            
+                            // NOWE: Skanowanie RoleOptionsGroup dla list ról
+                            DraftPlugin.Instance.Log.LogInfo("[DEBUG] ========================================");
+                            DraftPlugin.Instance.Log.LogInfo("[DEBUG] === MAPOWANIE RÓL przez RoleOptionsGroup ===");
+                            DraftPlugin.Instance.Log.LogInfo("[DEBUG] ========================================");
+                            
+                            try
+                            {
+                                var categoryRoleMap = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>();
+                                
+                                // Iteruj po WSZYSTKICH RoleOptionsGroup properties
+                                foreach (var prop in allProps)
+                                {
+                                    try
+                                    {
+                                        var groupObj = prop.GetValue(null);
+                                        if (groupObj == null) continue;
+                                        
+                                        var groupType = groupObj.GetType();
+                                        if (groupType.Name != "RoleOptionsGroup") continue;
+                                        
+                                        string categoryName = prop.Name; // Np. "CrewInvest", "NeutralKiller"
+                                        
+                                        // Pobierz ładniejszą nazwę z obiektu grupy
+                                        try
+                                        {
+                                            var nameField = groupType.GetField("Name");
+                                            var nameProp = groupType.GetProperty("Name");
+                                            if (nameField != null)
+                                                categoryName = (string)nameField.GetValue(groupObj) ?? categoryName;
+                                            else if (nameProp != null)
+                                                categoryName = (string)nameProp.GetValue(groupObj) ?? categoryName;
+                                        }
+                                        catch { }
+                                        
+                                        if (!categoryRoleMap.ContainsKey(categoryName))
+                                        {
+                                            categoryRoleMap[categoryName] = new System.Collections.Generic.List<string>();
+                                        }
+                                        
+                                        DraftPlugin.Instance.Log.LogInfo($"[DEBUG]   Skanowanie: {categoryName}");
+                                        
+                                        // Szukaj kolekcji ról w tym obiekcie grupy
+                                        foreach (var subProp in groupType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                                        {
+                                            try
+                                            {
+                                                var collectionObj = subProp.GetValue(groupObj);
+                                                if (collectionObj is System.Collections.IEnumerable collection && !(collectionObj is string))
+                                                {
+                                                    foreach (var roleItem in collection)
+                                                    {
+                                                        if (roleItem == null) continue;
+                                                        
+                                                        // Pobierz nazwę z typu (np. "SheriffOption" -> "Sheriff")
+                                                        string roleName = roleItem.GetType().Name
+                                                            .Replace("Option", "")
+                                                            .Replace("Role", "")
+                                                            .Replace("_", "");
+                                                        
+                                                        if (!string.IsNullOrEmpty(roleName) && !categoryRoleMap[categoryName].Contains(roleName))
+                                                        {
+                                                            categoryRoleMap[categoryName].Add(roleName);
+                                                            DraftPlugin.Instance.Log.LogInfo($"[DEBUG]     → {roleName}");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            catch { }
+                                        }
+                                    }
+                                    catch (System.Exception ex)
+                                    {
+                                        DraftPlugin.Instance.Log.LogWarning($"[DEBUG]   ✗ Błąd skanowania {prop.Name}: {ex.Message}");
+                                    }
+                                }
+                                
+                                // Podsumowanie
+                                DraftPlugin.Instance.Log.LogInfo("[DEBUG] ========================================");
+                                DraftPlugin.Instance.Log.LogInfo("[DEBUG] PODSUMOWANIE MAPOWANIA:");
+                                foreach (var kvp in categoryRoleMap.OrderBy(x => x.Key))
+                                {
+                                    if (kvp.Value.Count > 0)
+                                    {
+                                        string rolesList = string.Join(", ", kvp.Value.Take(10));
+                                        if (kvp.Value.Count > 10)
+                                            rolesList += $" ... (+{kvp.Value.Count - 10} więcej)";
+                                        
+                                        DraftPlugin.Instance.Log.LogInfo($"[DEBUG]   ✓ {kvp.Key} ({kvp.Value.Count} ról): {rolesList}");
+                                    }
+                                }
+                                DraftPlugin.Instance.Log.LogInfo($"[DEBUG]   Razem: {categoryRoleMap.Sum(x => x.Value.Count)} ról w {categoryRoleMap.Count} kategoriach");
+                            }
+                            catch (System.Exception ex)
+                            {
+                                DraftPlugin.Instance.Log.LogError($"[DEBUG] Błąd nowego mapowania: {ex.Message}");
                             }
                             
                             DraftPlugin.Instance.Log.LogInfo("[DEBUG] ========================================");
