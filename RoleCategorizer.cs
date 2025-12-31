@@ -37,7 +37,7 @@ namespace TownOfUsDraft
     {
         // HARDCODED MAPA: Rola → Kategoria (zgodna z TOU-Mira)
         // Na podstawie dokumentacji TOU-Mira i logów z MiscUtils.AllRegisteredRoles
-        private static Dictionary<string, RoleCategory> RoleMap = new Dictionary<string, RoleCategory>()
+        public static Dictionary<string, RoleCategory> RoleMap = new Dictionary<string, RoleCategory>()
         {
             // ===== IMPOSTOR ROLES =====
 
