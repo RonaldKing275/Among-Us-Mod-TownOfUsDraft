@@ -38,10 +38,7 @@ namespace TownOfUsDraft
         public static void StartDraft()
         {
             DraftPlugin.Instance.Log.LogInfo("--- START DRAFTU ---");
-            
-            // Włączamy blokadę - patch automatycznie ustawi TouRoleManagerPatches.ReplaceRoleManager = true
-            TownOfUsDraft.Patches.DraftRoleOverridePatch.BlockGeneration = true;
-            
+
             // Logi debugowania zostały usunięte - było zbyt dużo spamu
 
             PendingRoles.Clear();
@@ -246,7 +243,6 @@ namespace TownOfUsDraft
             DraftPlugin.Instance.Log.LogInfo($"      [ApplyInIntroStart] ═══════════════════════════════════");
             
             // KRYTYCZNE: Przywróć flagę TOU żeby mogło obsłużyć ShowRole!
-            TownOfUsDraft.Patches.DraftRoleOverridePatch.BlockGeneration = false;
             TownOfUsDraft.Patches.DraftRoleOverridePatch.SetTouReplaceRoleManagerFlag(false);
             DraftPlugin.Instance.Log.LogInfo("      → TOU odblokowane! ShowRole pokaże role z Draftu!");
             

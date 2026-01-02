@@ -5,57 +5,104 @@ using System.Linq;
 
 namespace TownOfUsDraft.Patches
 {
-    // NAJLEPSZE ROZWIĄZANIE: Używamy oficjalnej flagi TOU-Mira "ReplaceRoleManager"
+    // Patch na RoleManager.SelectRoles - aplikuj role z Draftu SYNCHRONICZNIE!
     [HarmonyPatch(typeof(RoleManager), nameof(RoleManager.SelectRoles))]
     public static class DraftRoleOverridePatch
     {
-        public static bool BlockGeneration = true;
-
+        private static bool _selectRolesBlocked = false;
+        
         [HarmonyPrefix]
-        [HarmonyPriority(Priority.First)] // Wykonaj przed TOU-Mira (Priority.Last)
+        [HarmonyPriority(Priority.First)]
         public static bool Prefix()
         {
-            if (BlockGeneration)
+            if (!TouConfigAdapter.EnableDraftMode.Value)
             {
-                DraftPlugin.Instance.Log.LogInfo("=== DRAFT MODE [SelectRoles]: BLOKUJĘ całkowicie i ustawiam wszystkich na Crewmate ===");
-                
-                // 1. ZABLOKUJ TOU
-                SetTouReplaceRoleManagerFlag(true);
-                DraftPlugin.Instance.Log.LogInfo("    → TouRoleManagerPatches.ReplaceRoleManager = true (TOU zablokowane)");
-                
-                // 2. RĘCZNIE USTAW WSZYSTKICH NA CREWMATE (żeby nikt nie dostał IsImpostor=true!)
-                int count = 0;
-                foreach (var player in PlayerControl.AllPlayerControls)
-                {
-                    if (player != null && !player.Data.Disconnected)
-                    {
-                        player.RpcSetRole(RoleTypes.Crewmate);
-                        count++;
-                        DraftPlugin.Instance.Log.LogInfo($"    → {player.Data.PlayerName} = Crewmate (czysty stan)");
-                    }
-                }
-                DraftPlugin.Instance.Log.LogInfo($"    → Ustawiono {count} graczy na Crewmate");
-                
-                // 3. ZABLOKUJ Vanillę całkowicie! (return false)
-                // To zapobiega losowaniu Impostorów przez Vanillę
-                DraftPlugin.Instance.Log.LogInfo("    → Vanilla SelectRoles ZABLOKOWANE (return false)");
-                return false;  // ← KLUCZOWA ZMIANA!
+                // Draft wyłączony - pozwól TOU działać normalnie
+                SetTouReplaceRoleManagerFlag(false);
+                return true;
             }
             
-            // Normalny tryb - pozwól TOU działać
+            // Sprawdź czy PendingRoles są puste I Draft się jeszcze nie zaczął
+            if (DraftManager.PendingRoles.Count == 0 && !_selectRolesBlocked)
+            {
+                // PIERWSZE WYWOŁANIE SelectRoles - zablokuj i uruchom Draft!
+                _selectRolesBlocked = true;
+                DraftPlugin.Instance.Log.LogInfo("╔═════════════════════════════════════════════════════════════════╗");
+                DraftPlugin.Instance.Log.LogInfo("║  SelectRoles - BLOKUJĘ! Uruchamiam Draft PRZED SelectRoles!    ║");
+                DraftPlugin.Instance.Log.LogInfo("╚═════════════════════════════════════════════════════════════════╝");
+                
+                SetTouReplaceRoleManagerFlag(true); // Zablokuj TOU
+                DraftManager.StartDraft();
+                return false; // Zablokuj SelectRoles!
+            }
+            
+            // Mamy role z draftu - ZABLOKUJ TOU i vanilla, aplikujemy w Postfix
+            if (DraftManager.PendingRoles.Count > 0)
+            {
+                DraftPlugin.Instance.Log.LogInfo("[SelectRoles Prefix] Mamy role z Draftu - blokuję TOU/Vanilla, aplikuję w Postfix");
+                SetTouReplaceRoleManagerFlag(true); // Zablokuj TOU
+                return false; // Zablokuj vanilla SelectRoles
+            }
+            
+            // Fallback - pozwól TOU działać
+            DraftPlugin.Instance.Log.LogInfo("[SelectRoles Prefix] Fallback - pozwalam TOU działać");
             SetTouReplaceRoleManagerFlag(false);
             return true;
         }
         
         [HarmonyPostfix]
-        [HarmonyPriority(Priority.Last)] // Wykonaj po wszystkich innych
+        [HarmonyPriority(Priority.Last)]
         public static void Postfix()
         {
-            if (BlockGeneration)
+            if (!TouConfigAdapter.EnableDraftMode.Value) return;
+            if (DraftManager.PendingRoles.Count == 0) return;
+            if (DraftManager._rolesApplied) return;
+            
+            DraftPlugin.Instance.Log.LogInfo("╔═════════════════════════════════════════════════════════════════╗");
+            DraftPlugin.Instance.Log.LogInfo("║       SelectRoles POSTFIX - APLIKUJĘ ROLE Z DRAFTU!            ║");
+            DraftPlugin.Instance.Log.LogInfo("╚═════════════════════════════════════════════════════════════════╝");
+            
+            // 1. Odblokuj TOU/MiraAPI żeby RpcSetRole działało dla custom ról!
+            SetTouReplaceRoleManagerFlag(false);
+            DraftPlugin.Instance.Log.LogInfo("    → TOU odblokowane - MiraAPI patch będzie działać");
+            
+            // 2. Aplikuj role z PendingRoles
+            int count = 0;
+            foreach (var kvp in DraftManager.PendingRoles)
             {
-                DraftPlugin.Instance.Log.LogInfo("=== DRAFT MODE: SelectRoles zakończony, TOU pozostaje zablokowane do końca Draftu ===");
-                // NIE przywracamy flagi tutaj - zrobi to ApplyDraftRolesAfterDraft() po zakończeniu Draftu!
+                var player = DraftManager.GetPlayerById(kvp.Key);
+                if (player != null && !player.Data.Disconnected)
+                {
+                    var roleBehaviour = kvp.Value;
+                    var roleName = roleBehaviour.GetType().Name.Replace("Role", "");
+                    
+                    DraftPlugin.Instance.Log.LogInfo($"    → {player.Data.PlayerName} = {roleName} (RoleID: {(int)roleBehaviour.Role})");
+                    
+                    try
+                    {
+                        // KLUCZOWE: RpcSetRole z custom RoleTypes
+                        // MiraAPI patch na RoleManager.SetRole zrobi Instantiate i Initialize!
+                        player.RpcSetRole(roleBehaviour.Role);
+                        
+                        DraftPlugin.Instance.Log.LogInfo($"      ✓ RpcSetRole({roleBehaviour.Role}) wysłane");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        DraftPlugin.Instance.Log.LogError($"      ✗ Błąd: {ex.Message}");
+                    }
+                    
+                    count++;
+                }
             }
+            
+            DraftPlugin.Instance.Log.LogInfo($"    ✓ Zaaplikowano {count}/{DraftManager.PendingRoles.Count} ról");
+            
+            // 3. Wyczyść PendingRoles i ustaw flagę
+            DraftManager._rolesApplied = true;
+            DraftManager.PendingRoles.Clear();
+            
+            // 4. Reset flagi blokady
+            _selectRolesBlocked = false;
         }
         
         // Ustawia TouRoleManagerPatches.ReplaceRoleManager przez refleksję (publiczna żeby DraftManager mógł używać)
