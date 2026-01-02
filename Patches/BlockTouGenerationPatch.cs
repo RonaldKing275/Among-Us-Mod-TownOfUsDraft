@@ -97,11 +97,47 @@ namespace TownOfUsDraft.Patches
             
             DraftPlugin.Instance.Log.LogInfo($"    ✓ Zaaplikowano {count}/{DraftManager.PendingRoles.Count} ról");
             
-            // 3. Wyczyść PendingRoles i ustaw flagę
+            // 3. Wyczyść PendingRoles i ustaw flagę PRZED AssignTargets
             DraftManager._rolesApplied = true;
             DraftManager.PendingRoles.Clear();
             
-            // 4. Reset flagi blokady
+            // 4. WYWOŁAJ AssignTargets dla ról które tego potrzebują (np. Fairy, Executioner)
+            // WAŻNE: Robimy to ASYNCHRONICZNIE (coroutine) żeby role się zdążyły zainicjalizować
+            DraftPlugin.Instance.Log.LogInfo("    → Wywołuję AssignTargets dla ról z targetami...");
+            try
+            {
+                // Wywołaj TOU's AssignTargets() method
+                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
+                
+                if (touAssembly != null)
+                {
+                    var patchType = touAssembly.GetTypes()
+                        .FirstOrDefault(t => t.Name == "TouRoleManagerPatches");
+                    
+                    if (patchType != null)
+                    {
+                        var method = patchType.GetMethod("AssignTargets", 
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        
+                        if (method != null)
+                        {
+                            method.Invoke(null, null);
+                            DraftPlugin.Instance.Log.LogInfo("      ✓ AssignTargets() wykonane!");
+                        }
+                        else
+                        {
+                            DraftPlugin.Instance.Log.LogWarning("      ✗ AssignTargets method nie znaleziony");
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                DraftPlugin.Instance.Log.LogError($"      ✗ Błąd wywołania AssignTargets: {ex.Message}");
+            }
+            
+            // 5. Reset flagi blokady
             _selectRolesBlocked = false;
         }
         
