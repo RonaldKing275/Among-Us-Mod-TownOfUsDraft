@@ -21,49 +21,74 @@ namespace TownOfUsDraft.Patches
             _draftCompleted = true;
             DraftPlugin.Instance.Log.LogInfo("╔═════════════════════════════════════════════════════════════════╗");
             DraftPlugin.Instance.Log.LogInfo($"║  DRAFT ZAKOŃCZONY! {DraftManager.PendingRoles.Count} ról w PendingRoles               ║");
-            DraftPlugin.Instance.Log.LogInfo("║  Wywołuję SelectRoles → (delay) → Begin() → Gra się rozpocznie! ║");
+            DraftPlugin.Instance.Log.LogInfo("║  SelectRoles → (3s delay) → Begin() → Gra się rozpocznie!   ║");
             DraftPlugin.Instance.Log.LogInfo("╚═════════════════════════════════════════════════════════════════╝");
             
-            // Wyczyść FirstRoundPlayerNames żeby uniknąć duplikacji FirstRoundIndicator
-            ClearFirstRoundPlayerNames();
-            
-            // WYWOŁAJ SelectRoles ponownie
-            // Tym razem PendingRoles są pełne, więc:
-            // → Prefix zablokuje vanilla/TOU
-            // → Postfix zaaplikuje role
-            var roleManager = RoleManager.Instance;
-            if (roleManager != null)
+            // ⚠️ KRYTYCZNE: SelectRoles() TYLKO NA HOŚCIE!
+            // Klienty otrzymają role przez RPC od hosta
+            if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
             {
-                DraftPlugin.Instance.Log.LogInfo("[OnDraftCompleted] Wywołuję RoleManager.SelectRoles()...");
-                roleManager.SelectRoles();
+                DraftPlugin.Instance.Log.LogInfo("[OnDraftCompleted] Jestem HOSTEM - aplikuję role...");
                 
-                // PO aplikacji ról, POCZEKAJ 1 klatkę i POTEM wywołaj ShipStatus.Begin()
-                // To pozwala Unity na Instantiate i Initialize wszystkich ról
-                var shipStatus = ShipStatus.Instance;
-                if (shipStatus != null)
+                // Wyczyść FirstRoundPlayerNames żeby uniknąć duplikacji FirstRoundIndicator
+                ClearFirstRoundPlayerNames();
+                
+                // WYWOŁAJ SelectRoles ponownie
+                // Tym razem PendingRoles są pełne, więc:
+                // → Prefix zablokuje vanilla/TOU
+                // → Postfix zaaplikuje role
+                var roleManager = RoleManager.Instance;
+                if (roleManager != null)
                 {
-                    DraftPlugin.Instance.Log.LogInfo("[OnDraftCompleted] Role zaaplikowane! Czekam 1 klatkę przed Begin()...");
-                    shipStatus.StartCoroutine(CoDelayedBegin(shipStatus).WrapToIl2Cpp());
+                    DraftPlugin.Instance.Log.LogInfo("[OnDraftCompleted] Wywołuję RoleManager.SelectRoles()...");
+                    roleManager.SelectRoles();
+                    
+                    // PO aplikacji ról, POCZEKAJ aż Unity zainicjalizuje wszystko
+                    var shipStatus = ShipStatus.Instance;
+                    if (shipStatus != null)
+                    {
+                        DraftPlugin.Instance.Log.LogInfo("[OnDraftCompleted] Role zaaplikowane! Uruchamiam delay przed Begin()...");
+                        shipStatus.StartCoroutine(CoDelayedBegin(shipStatus).WrapToIl2Cpp());
+                    }
+                    else
+                    {
+                        DraftPlugin.Instance.Log.LogError("[OnDraftCompleted] ShipStatus.Instance jest null!");
+                    }
                 }
                 else
                 {
-                    DraftPlugin.Instance.Log.LogError("[OnDraftCompleted] ShipStatus.Instance jest null!");
+                    DraftPlugin.Instance.Log.LogError("[OnDraftCompleted] RoleManager.Instance jest null!");
                 }
             }
             else
             {
-                DraftPlugin.Instance.Log.LogError("[OnDraftCompleted] RoleManager.Instance jest null!");
+                DraftPlugin.Instance.Log.LogInfo("[OnDraftCompleted] Jestem KLIENTEM - czekam na role i Begin() od hosta...");
             }
         }
         
-        // Coroutine: Czeka 1 klatkę i potem wywołuje ShipStatus.Begin()
+        // Coroutine: Czeka aż Unity zainicjalizuje wszystko, potem wywołuje ShipStatus.Begin()
         private static IEnumerator CoDelayedBegin(ShipStatus shipStatus)
         {
-            // Czekaj 1 klatkę żeby Unity miał czas na Initialize ról
-            yield return null;
+            DraftPlugin.Instance.Log.LogInfo("[CoDelayedBegin] Czekam 3s na pełną inicjalizację Unity (role + targety + HUD)...");
             
-            DraftPlugin.Instance.Log.LogInfo("[CoDelayedBegin] Unity gotowe! Wywołuję ShipStatus.Begin()...");
-            shipStatus.Begin();
+            // Sztywny delay - dynamiczne sprawdzanie nie działa bo Begin() niszczy i tworzy nowe obiekty
+            // 3s daje Unity czas na:
+            // - Instantiate wszystkich ról
+            // - Przypisanie targetów (Executioner, Fairy, Guardian Angel)
+            // - Inicjalizację HudManager i buttonów
+            // - Przygotowanie wszystkich event handlerów
+            yield return new WaitForSeconds(3f);
+            
+            // WAŻNE: Begin() musi być wywołane TYLKO na hoście!
+            if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
+            {
+                DraftPlugin.Instance.Log.LogInfo("[CoDelayedBegin] ✓ 3s minęło! Jestem hostem - wywołuję Begin()!");
+                shipStatus.Begin();
+            }
+            else
+            {
+                DraftPlugin.Instance.Log.LogInfo("[CoDelayedBegin] ✓ 3s minęło! NIE jestem hostem - czekam na Begin() od hosta...");
+            }
         }
         
         // Wyczyść TOU's FirstRoundPlayerNames żeby uniknąć duplikacji modifierów
