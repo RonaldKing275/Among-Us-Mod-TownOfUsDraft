@@ -180,9 +180,17 @@ namespace TownOfUsDraft
 
             DraftPlugin.Instance.Log.LogInfo($"=== DRAFT: {PendingRoles.Count} ról gotowych do aplikacji w ShowRole ===");
 
-            // Poinformuj ForceDraftPatch że Draft się zakończył
-            // To odblokuje Intro, a role będą zaaplikowane w ShowRole Prefix
-            TownOfUsDraft.Patches.ForceDraftPatch.OnDraftCompleted();
+            // ⚠️ KRYTYCZNE: OnDraftCompleted() TYLKO NA HOŚCIE!
+            // Klienty będą otrzymywać role przez RPC od hosta
+            if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost)
+            {
+                DraftPlugin.Instance.Log.LogInfo("=== DRAFT: Jestem HOSTEM - wywołuję OnDraftCompleted() ===");
+                TownOfUsDraft.Patches.ForceDraftPatch.OnDraftCompleted();
+            }
+            else
+            {
+                DraftPlugin.Instance.Log.LogInfo("=== DRAFT: Jestem KLIENTEM - czekam na role od hosta ===");
+            }
             
             yield return null;
         }
@@ -715,7 +723,6 @@ namespace TownOfUsDraft
                 // Filtruj role transformacyjne
                 if (TransformationRoles.Contains(roleName)) 
                 {
-                    DraftPlugin.Instance.Log.LogInfo($"[GetRoles] Pomijam transformację: {roleName}");
                     continue;
                 }
                 
@@ -726,28 +733,20 @@ namespace TownOfUsDraft
                 var roleBehaviour = r.TryCast<RoleBehaviour>();
                 if (roleBehaviour != null)
                 {
-                    // Log typu dla debugowania
                     string roleType = roleBehaviour.GetType().FullName;
                     bool isTouRole = roleType.StartsWith("TownOfUs.Roles.");
                     
                     if (isTouRole)
                     {
                         list.Add(roleName);
-                        DraftPlugin.Instance.Log.LogInfo($"[GetRoles] ✓ {roleName} (TOU-Mira)");
-                    }
-                    else
-                    {
-                        DraftPlugin.Instance.Log.LogWarning($"[GetRoles] ✗ Pomijam {roleName} (nie TOU: {roleType})");
                     }
                 }
                 else
                 {
-                    // Fallback - dodaj jeśli nie można sprawdzić typu
                     list.Add(roleName);
                 }
             } 
             
-            DraftPlugin.Instance.Log.LogInfo($"[GetRoles] Znaleziono {list.Count} dostępnych ról TOU-Mira");
             return list;
         }
         // NOWA FUNKCJA: Pełna inicjalizacja roli przez TOU-Mira API
