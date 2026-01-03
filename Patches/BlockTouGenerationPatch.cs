@@ -97,45 +97,21 @@ namespace TownOfUsDraft.Patches
             
             DraftPlugin.Instance.Log.LogInfo($"    ✓ Zaaplikowano {count}/{DraftManager.PendingRoles.Count} ról");
             
-            // 3. Wyczyść PendingRoles i ustaw flagę PRZED AssignTargets
+            // 3. Wyczyść PendingRoles i ustaw flagę
             DraftManager._rolesApplied = true;
             DraftManager.PendingRoles.Clear();
             
-            // 4. WYWOŁAJ AssignTargets dla ról które tego potrzebują (np. Fairy, Executioner)
-            // WAŻNE: Robimy to ASYNCHRONICZNIE (coroutine) żeby role się zdążyły zainicjalizować
-            DraftPlugin.Instance.Log.LogInfo("    → Wywołuję AssignTargets dla ról z targetami...");
-            try
-            {
-                // Wywołaj TOU's AssignTargets() method
-                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
-                
-                if (touAssembly != null)
-                {
-                    var patchType = touAssembly.GetTypes()
-                        .FirstOrDefault(t => t.Name == "TouRoleManagerPatches");
-                    
-                    if (patchType != null)
-                    {
-                        var method = patchType.GetMethod("AssignTargets", 
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                        
-                        if (method != null)
-                        {
-                            method.Invoke(null, null);
-                            DraftPlugin.Instance.Log.LogInfo("      ✓ AssignTargets() wykonane!");
-                        }
-                        else
-                        {
-                            DraftPlugin.Instance.Log.LogWarning("      ✗ AssignTargets method nie znaleziony");
-                        }
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                DraftPlugin.Instance.Log.LogError($"      ✗ Błąd wywołania AssignTargets: {ex.Message}");
-            }
+            // 4. WAŻNE: NIE WYWOŁUJEMY AssignTargets() tutaj!
+            //    TOU-Mira ma swój własny Postfix (Priority.First) który już to robi:
+            //    AssignCustomModifiersPatch() → AssignTargets()
+            //
+            //    ANALIZA: W logach widzimy że modifiery są dodawane DWA RAZY:
+            //    1. Przez TOU's AssignCustomModifiersPatch (Priority.First) - PIERWSZY
+            //    2. Przez nasze wywołanie (po 0.5s) - DRUGI → DUPLIKACJA!
+            //
+            //    Rezultat: "Player already has modifier with id X" → modifiery nie działają!
+            //    Rozwiązanie: Pozwól TOU obsłużyć AssignTargets() normalnie.
+            DraftPlugin.Instance.Log.LogInfo("    → AssignTargets() zostanie wywołane przez TOU's AssignCustomModifiersPatch (Priority.First)");
             
             // 5. Reset flagi blokady
             _selectRolesBlocked = false;

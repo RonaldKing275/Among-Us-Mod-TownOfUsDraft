@@ -126,7 +126,7 @@ namespace TownOfUsDraft
             { "JesterRole", RoleCategory.NeutralEvil },
             { "ExecutionerRole", RoleCategory.NeutralEvil },
             { "DoomsayerRole", RoleCategory.NeutralEvil },
-            { "SpectreRole", RoleCategory.NeutralEvil },
+            //{ "SpectreRole", RoleCategory.NeutralEvil }, // Nie wiem XD
             
             // Neutral Killing (15) ZATWIERDZONE!
             { "ArsonistRole", RoleCategory.NeutralKilling },
