@@ -13,6 +13,7 @@ namespace TownOfUsDraft.Patches
         public const byte RPC_ROLE_SELECTED = 249; // Ktoś wybrał rolę
         public const byte RPC_START_TURN = 251;    // Nowa tura (Host -> All)
         public const byte RPC_SET_TEAMTYPE = 248;  // Synchronizacja TeamType (Host -> All)
+        public const byte RPC_TIMER_SYNC = 254;    // Synchronizacja timera (Host -> All)
 
         public static void Postfix(PlayerControl __instance, byte callId, MessageReader reader)
         {
@@ -34,6 +35,12 @@ namespace TownOfUsDraft.Patches
 
                 DraftManager.OnTurnStarted(activePlayerId, catName, new System.Collections.Generic.List<string>{op1, op2, op3});
             }
+            else if (callId == RPC_TIMER_SYNC)
+            {
+                // Synchronizacja timera od hosta
+                float timerValue = reader.ReadSingle();
+                DraftHud.TurnWatchdogTimer = timerValue;
+            }
             else if (callId == RPC_SET_TEAMTYPE)
             {
                 // Odbieramy: playerId + teamType (byte: 0=Crewmate, 1=Impostor, 2=Neutral)
@@ -54,7 +61,7 @@ namespace TownOfUsDraft.Patches
                     if (teamTypeProp != null && teamTypeProp.CanWrite)
                     {
                         teamTypeProp.SetValue(target.Data.Role, targetTeamType);
-                        DraftPlugin.Instance.Log.LogInfo($"[RPC_SET_TEAMTYPE] ✓ Ustawiono TeamType dla {target.Data.PlayerName} na {targetTeamType}");
+
                     }
                     else
                     {
@@ -67,7 +74,7 @@ namespace TownOfUsDraft.Patches
                         if (backingField != null)
                         {
                             backingField.SetValue(target.Data.Role, targetTeamType);
-                            DraftPlugin.Instance.Log.LogInfo($"[RPC_SET_TEAMTYPE] ✓ Ustawiono TeamType (backing field) dla {target.Data.PlayerName} na {targetTeamType}");
+
                         }
                         else
                         {

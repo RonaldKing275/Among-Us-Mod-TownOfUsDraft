@@ -51,6 +51,12 @@ namespace TownOfUsDraft
                 {
                     TurnWatchdogTimer += Time.unscaledDeltaTime;
                     
+                    // Synchronizuj timer co 0.5s dla płynności
+                    if (Mathf.FloorToInt(TurnWatchdogTimer * 2) != Mathf.FloorToInt((TurnWatchdogTimer - Time.unscaledDeltaTime) * 2))
+                    {
+                        DraftManager.SendTimerSyncRpc(TurnWatchdogTimer);
+                    }
+                    
                     if (TurnWatchdogTimer >= MaxTurnTime)
                     {
                         DraftPlugin.Instance.Log.LogWarning($"[Watchdog] Timeout gracza {CurrentTurnPlayerId}. Auto-pick.");
@@ -177,19 +183,7 @@ namespace TownOfUsDraft
             else
             {
                 string dots = ""; int t = (int)(Time.unscaledTime * 2) % 4; for(int i=0; i<t; i++) dots += ".";
-                GUI.Label(new Rect(0, Screen.height/2 - 100, Screen.width, 100), $"WYBIERA GRACZ: {activeName}{dots}", _waitStyle);
-                
-                // Pokazujemy kategorię, którą wybiera aktywny gracz
-                if (!string.IsNullOrEmpty(CategoryTitle))
-                {
-                    GUIStyle catStyle = new GUIStyle(GUI.skin.label) 
-                    { 
-                        alignment = TextAnchor.MiddleCenter, 
-                        fontSize = 24 
-                    };
-                    catStyle.normal.textColor = Color.cyan;
-                    GUI.Label(new Rect(0, Screen.height/2 + 20, Screen.width, 50), $"Kategoria: {CategoryTitle}", catStyle);
-                }
+                GUI.Label(new Rect(0, Screen.height/2 - 50, Screen.width, 100), $"WYBIERA: {activeName}{dots}{timeLeft}", _waitStyle);
             }
         }
     }

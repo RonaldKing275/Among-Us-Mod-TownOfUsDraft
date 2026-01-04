@@ -35,13 +35,11 @@ namespace TownOfUsDraft.Patches
                 var player = GetPlayerById(id);
                 if (player != null)
                 {
-                    DraftPlugin.Instance.Log.LogInfo($"[PityShield] Tarcza aktywna dla: {player.Data.PlayerName} (ID: {id})");
                 }
             }
 
             if (ShieldedPlayers.Count == 0)
             {
-                DraftPlugin.Instance.Log.LogInfo("[PityShield] Brak graczy z tarczą w tej rundzie.");
             }
 
             CurrentGameRound1Deaths.Clear();
@@ -76,7 +74,6 @@ namespace TownOfUsDraft.Patches
                 if (!CurrentGameRound1Deaths.Contains(__instance.PlayerId))
                 {
                     CurrentGameRound1Deaths.Add(__instance.PlayerId);
-                    DraftPlugin.Instance.Log.LogInfo($"[DeathTracker] Zgon R1: {__instance.Data.PlayerName}");
                 }
             }
         }
