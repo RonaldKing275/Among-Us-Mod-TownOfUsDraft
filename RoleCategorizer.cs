@@ -35,6 +35,13 @@ namespace TownOfUsDraft
 
     public static class RoleCategorizer
     {
+        // ⚠️ TODO (v2.0): Zastąpić hardcoded mapę dynamicznym odczytem z TOU-Mira!
+        // Zamiast ręcznego mapowania, użyć:
+        //   - MiscUtils.AllRegisteredRoles → iteracja po wszystkich rolach
+        //   - role.Group.Name → odczyt kategorii z property .Group
+        //   - Automatyczne tworzenie mapy przy starcie gry
+        // To rozwiąże problem z nowymi rolami w przyszłych wersjach TOU-Mira.
+        
         // HARDCODED MAPA: Rola → Kategoria (zgodna z TOU-Mira)
         // Na podstawie dokumentacji TOU-Mira i logów z MiscUtils.AllRegisteredRoles
         public static Dictionary<string, RoleCategory> RoleMap = new Dictionary<string, RoleCategory>()
@@ -82,14 +89,14 @@ namespace TownOfUsDraft
             { "SpyRole", RoleCategory.CrewInvestigative },
             { "SonarRole", RoleCategory.CrewInvestigative },
             { "TrapperRole", RoleCategory.CrewInvestigative },
+            // { "HaunterRole", RoleCategory.CrewKilling }, // Duch
 
             // Crew Killing (3) ZATWIERDZONE!
             { "SheriffRole", RoleCategory.CrewKilling },
             { "VeteranRole", RoleCategory.CrewKilling },
             { "VigilanteRole", RoleCategory.CrewKilling },
             { "HunterRole", RoleCategory.CrewKilling },
-            // { "HaunterRole", RoleCategory.CrewKilling }, // Ghost killer
-            { "DeputyRole", RoleCategory.CrewKilling }, // Może zabijać
+            { "DeputyRole", RoleCategory.CrewKilling },
 
             // Crew Protective (4) ZATWIERDZONE!
             { "AltruistRole", RoleCategory.CrewProtective },
@@ -126,7 +133,7 @@ namespace TownOfUsDraft
             { "JesterRole", RoleCategory.NeutralEvil },
             { "ExecutionerRole", RoleCategory.NeutralEvil },
             { "DoomsayerRole", RoleCategory.NeutralEvil },
-            //{ "SpectreRole", RoleCategory.NeutralEvil }, // Nie wiem XD
+            //{ "SpectreRole", RoleCategory.NeutralEvil }, // Duch
             
             // Neutral Killing (15) ZATWIERDZONE!
             { "ArsonistRole", RoleCategory.NeutralKilling },
@@ -142,9 +149,104 @@ namespace TownOfUsDraft
             { "ChefRole", RoleCategory.NeutralOutlier },
             { "InquisitorRole", RoleCategory.NeutralOutlier },
             
-
-            // UWAGA: Nie dodaję modifierów (Lovers, Phantom z vanilla)
         };
+
+        // 🚀 PRZYSZŁOŚĆ (v2.0): Dynamiczne ładowanie mapy z TOU-Mira
+        // Ta funkcja będzie używana zamiast hardcoded RoleMap
+        /*
+        public static Dictionary<string, RoleCategory> BuildDynamicRoleMap()
+        {
+            var map = new Dictionary<string, RoleCategory>();
+            
+            try
+            {
+                // 1. Znajdź TOU-Mira assembly
+                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
+                
+                if (touAssembly == null) return map;
+                
+                // 2. Pobierz MiscUtils.AllRegisteredRoles
+                var miscUtilsType = touAssembly.GetType("TownOfUs.Utilities.MiscUtils");
+                var allRolesProp = miscUtilsType?.GetProperty("AllRegisteredRoles", 
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                
+                if (allRolesProp == null) return map;
+                
+                var allRoles = allRolesProp.GetValue(null) as System.Collections.IEnumerable;
+                if (allRoles == null) return map;
+                
+                // 3. Iteruj po rolach i odczytaj .Group.Name
+                foreach (var roleObj in allRoles)
+                {
+                    if (roleObj == null) continue;
+                    
+                    try
+                    {
+                        var roleType = roleObj.GetType();
+                        
+                        // Nazwa roli (np. "SheriffRole" → "Sheriff")
+                        string roleName = roleType.Name;
+                        if (roleName.EndsWith("Role"))
+                            roleName = roleName.Substring(0, roleName.Length - 4);
+                        
+                        // Pobierz .Group
+                        var groupProp = roleType.GetProperty("Group");
+                        if (groupProp == null) continue;
+                        
+                        var groupObj = groupProp.GetValue(roleObj);
+                        if (groupObj == null) continue;
+                        
+                        // Pobierz .Group.Name
+                        var groupNameProp = groupObj.GetType().GetProperty("Name");
+                        var groupNameField = groupObj.GetType().GetField("Name");
+                        
+                        string groupName = null;
+                        if (groupNameProp != null)
+                            groupName = (string)groupNameProp.GetValue(groupObj);
+                        else if (groupNameField != null)
+                            groupName = (string)groupNameField.GetValue(groupObj);
+                        
+                        if (string.IsNullOrEmpty(groupName)) continue;
+                        
+                        // Mapuj nazwę grupy na RoleCategory
+                        RoleCategory category = MapGroupNameToCategory(groupName);
+                        
+                        if (category != RoleCategory.Unknown)
+                        {
+                            map[roleName] = category;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            
+            return map;
+        }
+        
+        private static RoleCategory MapGroupNameToCategory(string groupName)
+        {
+            // Mapowanie nazwy grupy (np. "Crew Investigative") na enum RoleCategory
+            switch (groupName?.ToLower().Replace(" ", ""))
+            {
+                case "crewinvestigative": return RoleCategory.CrewInvestigative;
+                case "crewkilling": return RoleCategory.CrewKilling;
+                case "crewprotective": return RoleCategory.CrewProtective;
+                case "crewpower": return RoleCategory.CrewPower;
+                case "crewsupport": return RoleCategory.CrewSupport;
+                case "neutralbenign": return RoleCategory.NeutralBenign;
+                case "neutralevil": return RoleCategory.NeutralEvil;
+                case "neutralkilling": return RoleCategory.NeutralKilling;
+                case "neutraloutlier": return RoleCategory.NeutralOutlier;
+                case "impconcealing": return RoleCategory.ImpConcealing;
+                case "impkilling": return RoleCategory.ImpKilling;
+                case "imppower": return RoleCategory.ImpPower;
+                case "impsupport": return RoleCategory.ImpSupport;
+                default: return RoleCategory.Unknown;
+            }
+        }
+        */
 
         public static RoleCategory GetCategory(string roleName)
         {
