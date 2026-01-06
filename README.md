@@ -1,6 +1,6 @@
 # 🎮 Town of Us - Draft Mode
 
-**Wersja:** 1.0.0  
+**Wersja:** 1.1.0  
 **Autor:** RonaldKing  
 **Kompatybilność:** Town of Us Mira + MiraAPI
 
@@ -8,13 +8,13 @@
 
 ## 📋 Opis
 
-Draft Mode to innowacyjny dodatek do Town of Us, który wprowadza system draftu ról inspirowany grami MOBA. Zamiast losowego przydzielania ról, gracze wybierają swoje role w zorganizowanych turach, co zwiększa strategiczną głębię rozgrywki.
+Draft Mode to dodatek do Town of Us Mira, który wprowadza system draftu ról. Zamiast losowego przydzielania ról, gracze wybierają swoje role w zorganizowanych turach.
 
 ### ✨ Kluczowe funkcje
 
 - **🎯 Interaktywny Draft**: Każdy gracz wybiera rolę z 3 losowych opcji w swojej kategorii
 - **⏱️ Mechanizm Timeout**: Automatyczny wybór po 20s dla AFK graczy
-- **🛡️ Pity Shield System**: Ochrona dla graczy, którzy zginęli wcześnie w poprzedniej grze
+- **🛡️ Pity Shield System**: Ochrona dla 2 graczy, którzy zginęli wcześnie w poprzedniej grze
 - **🔄 Synchronizacja sieciowa**: Pełne wsparcie dla multiplayer z RPC
 - **⚙️ Pełna konfiguracja**: BepInEx config dla dostosowania do preferencji
 
@@ -164,98 +164,10 @@ Data: [float currentTime]
 
 ---
 
-## 🐛 Znane problemy i rozwiązania
-
-### Problem: Draft nie startuje
-**Rozwiązanie:**
-- Sprawdź `BepInEx/config/TownOfUsDraft.cfg` → `EnableDraftMode = true`
-- Sprawdź logi w `BepInEx/LogOutput.log`
-- Upewnij się, że TOU Mira jest zainstalowane
-
-### Problem: Timer nie jest synchronizowany
-**Rozwiązanie:**
-- To normalne - timer synchronizuje się co 1 sekundę
-- Host widzi dokładny timer, inni gracze z ~1s opóźnieniem
-
-### Problem: Niektóre role nie działają
-**Rozwiązanie:**
-- Sprawdź `RoleCategorizer.cs` - być może brakuje mapowania dla nowej roli
-- Dodaj rolę do odpowiedniej kategorii w `RoleMap`
-
-### Problem: Gra crashuje podczas finalizacji
-**Rozwiązanie:**
-- Zwiększ wartość timeout w `FinalizeDraftRoutine` (linia ~142 w DraftManager)
-- Sprawdź czy wszystkie DLL TOU Mira są aktualne
-
----
-
-## 📊 Kategorie ról
-
-### 🔴 **RandomImp** (Impostor)
-Vampire, Morphling, Ninja, Poisoner, Assassin, Chameleon, Grenadier, etc.
-
-### 🔎 **CrewInvestigative**
-Seer, Spy, Snitch, Tracker, Detective, Coroner, Lookout, Investigator, Psychic, Mortician
-
-### 🗡️ **CrewKilling**
-Sheriff, Veteran, Vigilante, Hunter
-
-### 🛡️ **CrewProtective**
-Medic, Warden, Guardian Angel
-
-### 🔧 **CrewSupport**
-Engineer, Transporter, Plumber, Altruist, Mayor, Mechanic, Time Master
-
-### ⚡ **CrewPower**
-Politician, Locksmith, Dictator
-
-### 😈 **NeutralEvil**
-Jester, Executioner, Doomsayer
-
-### ☠️ **NeutralKilling**
-Arsonist, Plaguebearer, Pestilence, Werewolf, The Glitch, Juggernaut, Serial Killer
-
-### 😇 **NeutralBenign**
-Amnesiac, Survivor, Lawyer, Pigeon
-
----
-
-## 🔮 Przyszłe plany (v2.0)
-
-- [ ] **Ban Phase**: Gracze mogą zbanować 1 rolę przed draftem
-- [ ] **Role Trading**: Wymiana ról między graczami
-- [ ] **Draft History**: Statystyki wyborów ról
-- [ ] **Custom UI**: Unity UI zamiast OnGUI
-- [ ] **Voice Lines**: Dźwięki podczas draftu
-- [ ] **Animations**: Płynne przejścia między turami
-- [ ] **Mobile Support**: Touch controls dla telefonów
-
----
-
 ## 📄 Licencja
 
 Ten projekt jest hobbystycznym dodatkiem do Among Us i Town of Us.  
 **Nie jest powiązany z Innersloth ani oficjalnym zespołem Town of Us.**
-
----
-
-## 🤝 Współpraca
-
-Znalazłeś bug? Masz pomysł na nową funkcję?  
-Zgłoś issue lub stwórz pull request!
-
-### Kontakt:
-- GitHub: [Twój profil]
-- Discord: [Twój Discord]
-
----
-
-## 🙏 Podziękowania
-
-- **Town of Us Mira Team** - za stworzenie podstawy
-- **MiraAPI Developers** - za API
-- **BepInEx Team** - za framework moddingu
-- **Innersloth** - za Among Us
 
 ---
 

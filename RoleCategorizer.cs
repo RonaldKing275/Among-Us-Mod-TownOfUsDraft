@@ -50,6 +50,7 @@ namespace TownOfUsDraft
             // Imp Killing (20) ZATWIERDZONE!
             { "AmbusherRole", RoleCategory.ImpKilling },
             { "BomberRole", RoleCategory.ImpKilling },
+            { "ParasiteRole", RoleCategory.ImpKilling },
             { "ScavengerRole", RoleCategory.ImpSupport },
             { "WarlockRole", RoleCategory.ImpKilling },
             
@@ -62,6 +63,7 @@ namespace TownOfUsDraft
             
             // Imp Power (21) ZATWIERDZONE!
             { "AmbassadorRole", RoleCategory.ImpPower },
+            { "PuppeteerRole", RoleCategory.ImpPower },
             { "SpellbinderRole", RoleCategory.ImpPower },
             //{ "TraitorRole", RoleCategory.ImpPower }, // Traitor jest specjalny
             
@@ -99,16 +101,19 @@ namespace TownOfUsDraft
             
             // Crew Power (5) ZATWIERDZONE!
             { "JailorRole", RoleCategory.CrewPower },
-            { "MayorRole", RoleCategory.CrewPower },
+            { "MonarchRole", RoleCategory.CrewPower },
+            //{ "MayorRole", RoleCategory.CrewPower }, // rola po Politician
             { "PoliticianRole", RoleCategory.CrewPower },
             { "ProsecutorRole", RoleCategory.CrewPower },
             { "SwapperRole", RoleCategory.CrewPower },
+            { "TimeLordRole", RoleCategory.CrewPower },
             
             // Crew Support (6) ZATWIERDZONE!
             { "EngineerTouRole", RoleCategory.CrewSupport },
             { "ImitatorRole", RoleCategory.CrewSupport },
             { "MediumRole", RoleCategory.CrewSupport },
             { "PlumberRole", RoleCategory.CrewSupport },
+            { "SentryRole", RoleCategory.CrewSupport },
             { "TransporterRole", RoleCategory.CrewSupport },
 
 
