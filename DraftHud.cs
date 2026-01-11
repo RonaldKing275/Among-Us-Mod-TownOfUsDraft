@@ -15,9 +15,9 @@ namespace TownOfUsDraft
         public static string CategoryTitle = "";
         public static List<string> MyOptions = new List<string>();
 
-        // Timer Hosta
-        public static bool HostTimerActive = false;
-        private float _hostTimer = 0f;
+        // USUNIĘTO: Timer Hosta - nie jest już używany
+        // public static bool HostTimerActive = false;
+        // private float _hostTimer = 0f;
 
         // WATCHDOG
         public static float TurnWatchdogTimer = 0f;
@@ -34,22 +34,20 @@ namespace TownOfUsDraft
 
         private void Update()
         {
-            if (HostTimerActive && AmongUsClient.Instance.AmHost)
-            {
-                _hostTimer += Time.unscaledDeltaTime;
-                if (_hostTimer >= 0.5f)
-                {
-                    HostTimerActive = false;
-                    _hostTimer = 0f;
-                    DraftManager.ProcessNextTurn();
-                }
-            }
+            // USUNIĘTO: HostTimerActive logic - to powodowało automatyczne przeskakiwanie tur!
+            // Draft teraz działa w pełni synchronicznie - ProcessNextTurn() jest wywoływane TYLKO po wyborze roli.
 
-            if (IsDraftActive && AmongUsClient.Instance.AmHost && !HostTimerActive)
+            if (IsDraftActive && AmongUsClient.Instance.AmHost)
             {
                 if (CurrentTurnPlayerId != 255)
                 {
                     TurnWatchdogTimer += Time.unscaledDeltaTime;
+                    
+                    // Synchronizuj timer co 0.5s dla płynności
+                    if (Mathf.FloorToInt(TurnWatchdogTimer * 2) != Mathf.FloorToInt((TurnWatchdogTimer - Time.unscaledDeltaTime) * 2))
+                    {
+                        DraftManager.SendTimerSyncRpc(TurnWatchdogTimer);
+                    }
                     
                     if (TurnWatchdogTimer >= MaxTurnTime)
                     {
@@ -65,7 +63,7 @@ namespace TownOfUsDraft
             {
                 if (IsDraftActive || _wasPaused) ForceUnfreeze();
                 IsDraftActive = false;
-                HostTimerActive = false;
+                // USUNIĘTO: HostTimerActive = false; - pole już nie istnieje
                 return;
             }
 
@@ -177,19 +175,7 @@ namespace TownOfUsDraft
             else
             {
                 string dots = ""; int t = (int)(Time.unscaledTime * 2) % 4; for(int i=0; i<t; i++) dots += ".";
-                GUI.Label(new Rect(0, Screen.height/2 - 100, Screen.width, 100), $"WYBIERA GRACZ: {activeName}{dots}", _waitStyle);
-                
-                // Pokazujemy kategorię, którą wybiera aktywny gracz
-                if (!string.IsNullOrEmpty(CategoryTitle))
-                {
-                    GUIStyle catStyle = new GUIStyle(GUI.skin.label) 
-                    { 
-                        alignment = TextAnchor.MiddleCenter, 
-                        fontSize = 24 
-                    };
-                    catStyle.normal.textColor = Color.cyan;
-                    GUI.Label(new Rect(0, Screen.height/2 + 20, Screen.width, 50), $"Kategoria: {CategoryTitle}", catStyle);
-                }
+                GUI.Label(new Rect(0, Screen.height/2 - 50, Screen.width, 100), $"WYBIERA: {activeName}{dots}{timeLeft}", _waitStyle);
             }
         }
     }

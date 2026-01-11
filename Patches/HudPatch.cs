@@ -12,7 +12,6 @@ namespace TownOfUsDraft.Patches
             if (__instance.gameObject.GetComponent<DraftHud>() == null)
             {
                 __instance.gameObject.AddComponent<DraftHud>();
-                DraftPlugin.Instance.Log.LogInfo("[HudPatch] DraftHud podpięty pod HudManager!");
             }
         }
     }

@@ -4,7 +4,7 @@ namespace TownOfUsDraft
 {
     public enum RoleCategory
     {
-        // UWAGA: Kolejność musi odpowiadać indeksom w TOU-Mira (0-24)
+        // Kolejność indeksów w TOU-Mira (0-24)
         CommonCrew = 0,         // Index 0: Common Crew
         RandomCrew = 1,         // Index 1: Random Crew
         CrewInvestigative = 2,  // Index 2: Crew Investigative
@@ -35,8 +35,6 @@ namespace TownOfUsDraft
 
     public static class RoleCategorizer
     {
-        // HARDCODED MAPA: Rola → Kategoria (zgodna z TOU-Mira)
-        // Na podstawie dokumentacji TOU-Mira i logów z MiscUtils.AllRegisteredRoles
         public static Dictionary<string, RoleCategory> RoleMap = new Dictionary<string, RoleCategory>()
         {
             // ===== IMPOSTOR ROLES =====
@@ -52,6 +50,7 @@ namespace TownOfUsDraft
             // Imp Killing (20) ZATWIERDZONE!
             { "AmbusherRole", RoleCategory.ImpKilling },
             { "BomberRole", RoleCategory.ImpKilling },
+            { "ParasiteRole", RoleCategory.ImpKilling },
             { "ScavengerRole", RoleCategory.ImpSupport },
             { "WarlockRole", RoleCategory.ImpKilling },
             
@@ -64,6 +63,7 @@ namespace TownOfUsDraft
             
             // Imp Power (21) ZATWIERDZONE!
             { "AmbassadorRole", RoleCategory.ImpPower },
+            { "PuppeteerRole", RoleCategory.ImpPower },
             { "SpellbinderRole", RoleCategory.ImpPower },
             //{ "TraitorRole", RoleCategory.ImpPower }, // Traitor jest specjalny
             
@@ -82,14 +82,14 @@ namespace TownOfUsDraft
             { "SpyRole", RoleCategory.CrewInvestigative },
             { "SonarRole", RoleCategory.CrewInvestigative },
             { "TrapperRole", RoleCategory.CrewInvestigative },
+            // { "HaunterRole", RoleCategory.CrewKilling }, // Duch
 
             // Crew Killing (3) ZATWIERDZONE!
             { "SheriffRole", RoleCategory.CrewKilling },
             { "VeteranRole", RoleCategory.CrewKilling },
             { "VigilanteRole", RoleCategory.CrewKilling },
             { "HunterRole", RoleCategory.CrewKilling },
-            // { "HaunterRole", RoleCategory.CrewKilling }, // Ghost killer
-            { "DeputyRole", RoleCategory.CrewKilling }, // Może zabijać
+            { "DeputyRole", RoleCategory.CrewKilling },
 
             // Crew Protective (4) ZATWIERDZONE!
             { "AltruistRole", RoleCategory.CrewProtective },
@@ -101,16 +101,19 @@ namespace TownOfUsDraft
             
             // Crew Power (5) ZATWIERDZONE!
             { "JailorRole", RoleCategory.CrewPower },
-            { "MayorRole", RoleCategory.CrewPower },
+            { "MonarchRole", RoleCategory.CrewPower },
+            //{ "MayorRole", RoleCategory.CrewPower }, // rola po Politician
             { "PoliticianRole", RoleCategory.CrewPower },
             { "ProsecutorRole", RoleCategory.CrewPower },
             { "SwapperRole", RoleCategory.CrewPower },
+            { "TimeLordRole", RoleCategory.CrewPower },
             
             // Crew Support (6) ZATWIERDZONE!
             { "EngineerTouRole", RoleCategory.CrewSupport },
             { "ImitatorRole", RoleCategory.CrewSupport },
             { "MediumRole", RoleCategory.CrewSupport },
             { "PlumberRole", RoleCategory.CrewSupport },
+            { "SentryRole", RoleCategory.CrewSupport },
             { "TransporterRole", RoleCategory.CrewSupport },
 
 
@@ -126,7 +129,7 @@ namespace TownOfUsDraft
             { "JesterRole", RoleCategory.NeutralEvil },
             { "ExecutionerRole", RoleCategory.NeutralEvil },
             { "DoomsayerRole", RoleCategory.NeutralEvil },
-            //{ "SpectreRole", RoleCategory.NeutralEvil }, // Nie wiem XD
+            //{ "SpectreRole", RoleCategory.NeutralEvil }, // Duch
             
             // Neutral Killing (15) ZATWIERDZONE!
             { "ArsonistRole", RoleCategory.NeutralKilling },
@@ -142,8 +145,6 @@ namespace TownOfUsDraft
             { "ChefRole", RoleCategory.NeutralOutlier },
             { "InquisitorRole", RoleCategory.NeutralOutlier },
             
-
-            // UWAGA: Nie dodaję modifierów (Lovers, Phantom z vanilla)
         };
 
         public static RoleCategory GetCategory(string roleName)
@@ -152,14 +153,39 @@ namespace TownOfUsDraft
             return RoleCategory.Unknown;
         }
 
-        // Konwersja indeksu ze Slotu (0-24) na RoleCategory
+        // Konwersja indeksu ze Slotu (RoleListOption z TOU-Mira) na RoleCategory
         public static RoleCategory IndexToCategory(int slotIndex)
         {
-            if (slotIndex >= 0 && slotIndex <= 24)
+            // Mapowanie zgodne z TOU-Mira's RoleListOption enum (TownOfUs/Options/RoleOptions.cs line 303-330)
+            switch (slotIndex)
             {
-                return (RoleCategory)slotIndex;
+                case 0: return RoleCategory.CommonCrew;      // CrewCommon
+                case 1: return RoleCategory.RandomCrew;      // CrewRandom
+                case 2: return RoleCategory.CrewInvestigative; // CrewInvest
+                case 3: return RoleCategory.CrewKilling;     // CrewKilling
+                case 4: return RoleCategory.CrewProtective;  // CrewProtective
+                case 5: return RoleCategory.CrewPower;       // CrewPower
+                case 6: return RoleCategory.CrewSupport;     // CrewSupport
+                case 7: return RoleCategory.SpecialCrew;     // CrewSpecial
+                case 8: return RoleCategory.NonImp;          // NonImp (Crew lub Neutral)
+                case 9: return RoleCategory.CommonNeutral;   // NeutCommon
+                case 10: return RoleCategory.SpecialNeutral; // NeutSpecial
+                case 11: return RoleCategory.WildcardNeutral; // NeutWildcard
+                case 12: return RoleCategory.RandomNeutral;  // NeutRandom
+                case 13: return RoleCategory.NeutralBenign;  // NeutBenign
+                case 14: return RoleCategory.NeutralEvil;    // NeutEvil
+                case 15: return RoleCategory.NeutralKilling; // NeutKilling
+                case 16: return RoleCategory.NeutralOutlier; // NeutOutlier
+                case 17: return RoleCategory.CommonImp;      // ImpCommon
+                case 18: return RoleCategory.RandomImp;      // ImpRandom
+                case 19: return RoleCategory.ImpConcealing;  // ImpConceal
+                case 20: return RoleCategory.ImpKilling;     // ImpKilling
+                case 21: return RoleCategory.ImpPower;       // ImpPower
+                case 22: return RoleCategory.ImpSupport;     // ImpSupport
+                case 23: return RoleCategory.SpecialImp;     // ImpSpecial
+                case 24: return RoleCategory.Any;            // Any
+                default: return RoleCategory.Unknown;
             }
-            return RoleCategory.Unknown;
         }
 
         public static List<string> GetRolesInCategory(RoleCategory category, List<string> availableRoles)
