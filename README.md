@@ -1,7 +1,7 @@
 # 🎮 Town of Us - Draft Mode
 
-**Wersja:** 1.0.0  
-**Autor:** RafKing  
+**Wersja:** 1.2.0  
+**Autor:** RonaldKing 
 **Kompatybilność:** Town of Us Mira + MiraAPI
 
 ---
