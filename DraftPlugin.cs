@@ -5,7 +5,7 @@ using Il2CppInterop.Runtime.Injection;
 
 namespace TownOfUsDraft
 {
-    [BepInPlugin("TownOfUsDraft", "Town Of Us Draft Mode", "1.0.0")]
+    [BepInPlugin("TownOfUsDraft", "Town Of Us Draft Mode", "1.1.0")]
     public class DraftPlugin : BasePlugin
     {
         public static DraftPlugin Instance;

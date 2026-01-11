@@ -12,13 +12,17 @@ namespace TownOfUsDraft.Patches
         private static bool _selectRolesBlocked = false;
         
         [HarmonyPrefix]
-        [HarmonyPriority(Priority.First)]
+        [HarmonyPriority(Priority.First + 200)] // NAJWYŻSZY priorytet
+        [HarmonyBefore("auavengers.tou.mira")] // KRYTYCZNE: Wykonaj się PRZED TOU-Mira!
         public static bool Prefix()
         {
+            DraftPlugin.Instance.Log.LogInfo($"[Prefix] EnableDraftMode: {TouConfigAdapter.EnableDraftMode.Value}, PendingRoles.Count: {DraftManager.PendingRoles.Count}, _selectRolesBlocked: {_selectRolesBlocked}");
+            
             if (!TouConfigAdapter.EnableDraftMode.Value)
             {
                 // Draft wyłączony - pozwól TOU działać normalnie
                 SetTouReplaceRoleManagerFlag(false);
+                DraftPlugin.Instance.Log.LogInfo("[Prefix] Draft wyłączony - TOU może działać normalnie");
                 return true;
             }
             
@@ -27,26 +31,23 @@ namespace TownOfUsDraft.Patches
             {
                 // PIERWSZE WYWOŁANIE SelectRoles - zablokuj i uruchom Draft!
                 _selectRolesBlocked = true;
-                DraftPlugin.Instance.Log.LogInfo("╔═════════════════════════════════════════════════════════════════╗");
-                DraftPlugin.Instance.Log.LogInfo("║  SelectRoles - BLOKUJĘ! Uruchamiam Draft PRZED SelectRoles!    ║");
-                DraftPlugin.Instance.Log.LogInfo("╚═════════════════════════════════════════════════════════════════╝");
-                
                 SetTouReplaceRoleManagerFlag(true); // Zablokuj TOU
+                DraftPlugin.Instance.Log.LogInfo("[Prefix] BLOKUJĘ SelectRoles! Uruchamiam Draft...");
                 DraftManager.StartDraft();
                 return false; // Zablokuj SelectRoles!
             }
             
-            // Mamy role z draftu - ZABLOKUJ TOU i vanilla, aplikujemy w Postfix
+            // Mamy role z draftu - ZABLOKUJ vanilla, aplikujemy w Postfix
             if (DraftManager.PendingRoles.Count > 0)
             {
-                DraftPlugin.Instance.Log.LogInfo("[SelectRoles Prefix] Mamy role z Draftu - blokuję TOU/Vanilla, aplikuję w Postfix");
-                SetTouReplaceRoleManagerFlag(true); // Zablokuj TOU
-                return false; // Zablokuj vanilla SelectRoles
+                SetTouReplaceRoleManagerFlag(true); // Zablokuj TOU (vanilla sprawdzi tę flagę i nic nie zrobi)
+                DraftPlugin.Instance.Log.LogInfo("[Prefix] Mamy role z Draftu - BLOKUJĘ vanilla, aplikuję w Postfix!");
+                return false; // BLOKUJ vanilla SelectRoles - nie chcemy losowych ról!
             }
             
             // Fallback - pozwól TOU działać
-            DraftPlugin.Instance.Log.LogInfo("[SelectRoles Prefix] Fallback - pozwalam TOU działać");
             SetTouReplaceRoleManagerFlag(false);
+            DraftPlugin.Instance.Log.LogInfo("[Prefix] Fallback - TOU może działać");
             return true;
         }
         
@@ -58,15 +59,15 @@ namespace TownOfUsDraft.Patches
             if (DraftManager.PendingRoles.Count == 0) return;
             if (DraftManager._rolesApplied) return;
             
-            DraftPlugin.Instance.Log.LogInfo("╔═════════════════════════════════════════════════════════════════╗");
-            DraftPlugin.Instance.Log.LogInfo("║       SelectRoles POSTFIX - APLIKUJĘ ROLE Z DRAFTU!            ║");
-            DraftPlugin.Instance.Log.LogInfo("╚═════════════════════════════════════════════════════════════════╝");
+            DraftPlugin.Instance.Log.LogError("╔═════════════════════════════════════════════════════════════════╗");
+            DraftPlugin.Instance.Log.LogError("║       SelectRoles POSTFIX - APLIKUJĘ ROLE Z DRAFTU!            ║");
+            DraftPlugin.Instance.Log.LogError("╚═════════════════════════════════════════════════════════════════╝");
             
-            // 1. Odblokuj TOU/MiraAPI żeby RpcSetRole działało dla custom ról!
+            // Odblokuj TOU/MiraAPI żeby RpcSetRole działało dla custom ról
             SetTouReplaceRoleManagerFlag(false);
-            DraftPlugin.Instance.Log.LogInfo("    → TOU odblokowane - MiraAPI patch będzie działać");
+            DraftPlugin.Instance.Log.LogError("    → TOU odblokowane - MiraAPI patch będzie działać");
             
-            // 2. Aplikuj role z PendingRoles
+            // Aplikuj role z PendingRoles
             int count = 0;
             foreach (var kvp in DraftManager.PendingRoles)
             {
@@ -74,91 +75,167 @@ namespace TownOfUsDraft.Patches
                 if (player != null && !player.Data.Disconnected)
                 {
                     var roleBehaviour = kvp.Value;
-                    var roleName = roleBehaviour.GetType().Name.Replace("Role", "");
+                    var rolePrefabName = (roleBehaviour as UnityEngine.Object)?.name ?? "Unknown";
                     
-                    DraftPlugin.Instance.Log.LogInfo($"    → {player.Data.PlayerName} = {roleName} (RoleID: {(int)roleBehaviour.Role})");
+                    DraftPlugin.Instance.Log.LogError($"[POSTFIX] → Gracz: {player.Data.PlayerName} (ID:{player.PlayerId})");
+                    DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ Wybrana rola (prefab): {rolePrefabName}");
+                    DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ RoleBehaviour Type: {roleBehaviour.GetType().FullName}");
+                    DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ RoleBehaviour.Role (RoleTypes): {(int)roleBehaviour.Role} = {roleBehaviour.Role}");
                     
-                    try
+                    if (AmongUsClient.Instance.AmHost)
                     {
-                        // KLUCZOWE: RpcSetRole z custom RoleTypes
-                        // MiraAPI patch na RoleManager.SetRole zrobi Instantiate i Initialize!
-                        player.RpcSetRole(roleBehaviour.Role);
+                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ HOST: Ustawiam lokalnie + wysyłam RPC_SET_DRAFT_ROLE");
                         
-                        DraftPlugin.Instance.Log.LogInfo($"      ✓ RpcSetRole({roleBehaviour.Role}) wysłane");
+                        // Host: Ustaw lokalnie używając DraftNetworkPatch.SetExactRoleLocal
+                        DraftNetworkPatch.CallSetExactRoleLocal(player, roleBehaviour);
+                        
+                        // Host: Wyślij custom RPC do klientów
+                        SendSetDraftRoleRpc(player.PlayerId, rolePrefabName);
+                        
+                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]   └─ ✓ Custom RPC wysłany");
                     }
-                    catch (System.Exception ex)
+                    else
                     {
-                        DraftPlugin.Instance.Log.LogError($"      ✗ Błąd: {ex.Message}");
+                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]   └─ KLIENT: Czekam na RPC_SET_DRAFT_ROLE od hosta");
+                    }
+                    
+                    // Sprawdź przypisaną rolę
+                    if (player.Data != null && player.Data.Role != null)
+                    {
+                        var assignedRoleName = (player.Data.Role as UnityEngine.Object)?.name ?? player.Data.Role.GetType().Name;
+                        var assignedRoleType = player.Data.Role.Role;
+                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]      ✓ player.Data.Role: {assignedRoleName} (RoleTypes:{(int)assignedRoleType})");
+                    }
+                    else
+                    {
+                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]      ✗ player.Data.Role jest NULL.");
                     }
                     
                     count++;
                 }
             }
             
-            DraftPlugin.Instance.Log.LogInfo($"    ✓ Zaaplikowano {count}/{DraftManager.PendingRoles.Count} ról");
+            DraftPlugin.Instance.Log.LogError($"    ✓ Przetworzono {count}/{DraftManager.PendingRoles.Count} ról");
             
-            // 3. Wyczyść PendingRoles i ustaw flagę
+            // KLUCZOWE: Wywołaj AssignTargets() PO aplikacji ról z draftu!
+            // TOU wywołało AssignTargets() w swoim Postfix, ale dla STARYCH ról.
+            // Teraz musimy wywołać ponownie dla NOWYCH ról - ZARÓWNO na hoście JAK I na klientach!
+            DraftPlugin.Instance.Log.LogError("    → Wywołuję TOU's AssignTargets() dla nowych ról...");
+            try
+            {
+                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
+                    
+                if (touAssembly != null)
+                {
+                    var patchType = touAssembly.GetTypes()
+                        .FirstOrDefault(t => t.Name == "TouRoleManagerPatches");
+                        
+                    if (patchType != null)
+                    {
+                        var assignTargetsMethod = patchType.GetMethod("AssignTargets", 
+                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        
+                        if (assignTargetsMethod != null)
+                        {
+                            // Wywołaj lokalnie na hoście
+                            assignTargetsMethod.Invoke(null, null);
+                            DraftPlugin.Instance.Log.LogError("    ✓ AssignTargets() wywołane na hoście!");
+                            
+                            // Wyślij RPC do wszystkich klientów
+                            if (AmongUsClient.Instance.AmHost)
+                            {
+                                SendAssignTargetsRpc();
+                                DraftPlugin.Instance.Log.LogError("    ✓ Wysłano RPC_ASSIGN_TARGETS do klientów!");
+                            }
+                        }
+                        else
+                        {
+                            DraftPlugin.Instance.Log.LogWarning("    ⚠ Nie znaleziono metody AssignTargets()");
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                DraftPlugin.Instance.Log.LogError($"    ✗ Błąd podczas wywołania AssignTargets(): {ex.Message}");
+            }
+            
+            // Wyczyść PendingRoles i ustaw flagę
             DraftManager._rolesApplied = true;
             DraftManager.PendingRoles.Clear();
-            
-            // 4. WAŻNE: NIE WYWOŁUJEMY AssignTargets() tutaj!
-            //    TOU-Mira ma swój własny Postfix (Priority.First) który już to robi:
-            //    AssignCustomModifiersPatch() → AssignTargets()
-            //
-            //    ANALIZA: W logach widzimy że modifiery są dodawane DWA RAZY:
-            //    1. Przez TOU's AssignCustomModifiersPatch (Priority.First) - PIERWSZY
-            //    2. Przez nasze wywołanie (po 0.5s) - DRUGI → DUPLIKACJA!
-            //
-            //    Rezultat: "Player already has modifier with id X" → modifiery nie działają!
-            //    Rozwiązanie: Pozwól TOU obsłużyć AssignTargets() normalnie.
-            DraftPlugin.Instance.Log.LogInfo("    → AssignTargets() zostanie wywołane przez TOU's AssignCustomModifiersPatch (Priority.First)");
-            
-            // 5. Reset flagi blokady
             _selectRolesBlocked = false;
         }
         
-        // Ustawia TouRoleManagerPatches.ReplaceRoleManager przez refleksję (publiczna żeby DraftManager mógł używać)
+        // Wysyła RPC informujący wszystkich że należy wywołać AssignTargets()
+        private static void SendAssignTargetsRpc()
+        {
+            if (!AmongUsClient.Instance.AmHost)
+            {
+                DraftPlugin.Instance.Log.LogWarning("[SendAssignTargetsRpc] Tylko host może wysyłać ten RPC!");
+                return;
+            }
+            
+            var writer = AmongUsClient.Instance.StartRpcImmediately(
+                PlayerControl.LocalPlayer.NetId,
+                DraftNetworkPatch.RPC_ASSIGN_TARGETS,
+                Hazel.SendOption.Reliable,
+                -1   // Wyślij do wszystkich
+            );
+            
+            // Brak danych do wysłania - to tylko sygnał
+            
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+            
+            DraftPlugin.Instance.Log.LogError($"[SendAssignTargetsRpc] ✓ Wysłano RPC_ASSIGN_TARGETS");
+        }
+        
+        // Wysyła custom RPC z nazwą prefab roli do wszystkich klientów
+        private static void SendSetDraftRoleRpc(byte playerId, string rolePrefabName)
+        {
+            if (!AmongUsClient.Instance.AmHost)
+            {
+                DraftPlugin.Instance.Log.LogWarning("[SendSetDraftRoleRpc] Tylko host może wysyłać ten RPC!");
+                return;
+            }
+            
+            var writer = AmongUsClient.Instance.StartRpcImmediately(
+                PlayerControl.LocalPlayer.NetId,
+                250, // RPC_SET_DRAFT_ROLE
+                Hazel.SendOption.Reliable,
+                -1   // Wyślij do wszystkich
+            );
+            
+            writer.Write(playerId);
+            writer.Write(rolePrefabName);
+            
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+            
+            DraftPlugin.Instance.Log.LogError($"[SendSetDraftRoleRpc] ✓ Wysłano RPC: PlayerId={playerId}, Role={rolePrefabName}");
+        }
+        
+        // Ustawia TouRoleManagerPatches.ReplaceRoleManager przez refleksję
         public static void SetTouReplaceRoleManagerFlag(bool value)
         {
             try
             {
-                // Znajdź TownOfUsMira assembly
                 var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
                     .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
                     
-                if (touAssembly == null)
-                {
-                    DraftPlugin.Instance.Log.LogWarning("[SetTouFlag] TownOfUsMira assembly nie znalezione!");
-                    return;
-                }
+                if (touAssembly == null) return;
 
-                // Znajdź TouRoleManagerPatches
                 var patchType = touAssembly.GetTypes()
                     .FirstOrDefault(t => t.Name == "TouRoleManagerPatches");
                     
-                if (patchType == null)
-                {
-                    DraftPlugin.Instance.Log.LogWarning("[SetTouFlag] TouRoleManagerPatches nie znaleziony!");
-                    return;
-                }
+                if (patchType == null) return;
 
-                // Znajdź pole ReplaceRoleManager
                 var field = patchType.GetField("ReplaceRoleManager", BindingFlags.Public | BindingFlags.Static);
                 
-                if (field == null)
-                {
-                    DraftPlugin.Instance.Log.LogWarning("[SetTouFlag] ReplaceRoleManager field nie znaleziony!");
-                    return;
-                }
+                if (field == null) return;
 
-                // Ustaw wartość
                 field.SetValue(null, value);
-                DraftPlugin.Instance.Log.LogInfo($"[SetTouFlag] ✓ TouRoleManagerPatches.ReplaceRoleManager = {value}");
             }
-            catch (System.Exception ex)
-            {
-                DraftPlugin.Instance.Log.LogError($"[SetTouFlag] Exception: {ex.Message}\n{ex.StackTrace}");
-            }
+            catch { }
         }
     }
 }
