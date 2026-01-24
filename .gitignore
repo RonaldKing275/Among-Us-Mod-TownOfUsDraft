@@ -183,3 +183,4 @@ Assets/AssetStoreTools*
 *.suo
 *.cache
 *.csproj.user
+*.bat
