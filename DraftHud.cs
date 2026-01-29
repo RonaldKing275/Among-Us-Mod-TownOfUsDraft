@@ -159,11 +159,27 @@ namespace TownOfUsDraft
                 {
                     for(int i=0; i<MyOptions.Count; i++)
                     {
-                        string display = MyOptions[i].Replace("Role", "");
+                        string option = MyOptions[i];
+                        bool isEmpty = option == "NO_OPTION";
+                        
+                        string display = isEmpty ? "BRAK" : option.Replace("Role", "");
+                        
+                        // Zapisz obecny stan GUI.enabled
+                        bool prevEnabled = GUI.enabled;
+                        
+                        // Jeśli pusta opcja -> zablokuj przycisk
+                        if (isEmpty) GUI.enabled = false;
+
                         if (GUI.Button(new Rect(x, 150 + (i * 100), w, 80), display, _btnStyle))
                         {
-                            DraftManager.OnPlayerSelectedRole(MyOptions[i]);
+                            if (!isEmpty) 
+                            {
+                                DraftManager.OnPlayerSelectedRole(option);
+                            }
                         }
+                        
+                        // Przywróć stan GUI.enabled
+                        GUI.enabled = prevEnabled;
                     }
                     GUI.backgroundColor = new Color(0.7f, 0.2f, 0.2f);
                     if (GUI.Button(new Rect(x, 500, w, 80), "LOSUJ (RANDOM)", _btnStyle))

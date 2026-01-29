@@ -137,7 +137,7 @@ namespace TownOfUsDraft
             { "JuggernautRole", RoleCategory.NeutralKilling },
             { "PlaguebearerRole", RoleCategory.NeutralKilling },
             //{ "PestilenceRole", RoleCategory.NeutralKilling }, // Pestilence jest specjalny
-            { "SoulCollectorRole", RoleCategory.NeutralOutlier },
+            { "SoulCollectorRole", RoleCategory.NeutralKilling },
             { "VampireRole", RoleCategory.NeutralKilling },
             { "WerewolfRole", RoleCategory.NeutralKilling },
             
