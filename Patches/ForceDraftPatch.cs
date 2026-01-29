@@ -81,11 +81,32 @@ namespace TownOfUsDraft.Patches
             [HarmonyPostfix]
             public static void Postfix()
             {
-                // Wyczyść DraftHud żeby nie interferował z UI
+                DraftPlugin.Instance.Log.LogInfo("[OnGameEnd] Resetuję stan Draftu...");
+                
+                // Resetuj menadżera
+                DraftManager.ResetState();
+                
+                // Resetuj patch blokujący
+                DraftRoleOverridePatch.ResetPatchState();
+
+                // Wyczyść DraftHud
                 if (DraftHud.Instance != null)
                 {
                     UnityEngine.Object.Destroy(DraftHud.Instance.gameObject);
                 }
+            }
+        }
+
+        // Dodatkowy reset przy starcie gry (bezpiecznik)
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.StartGame))]
+        public static class ResetDraftOnStart
+        {
+            [HarmonyPrefix]
+            public static void Prefix()
+            {
+                DraftPlugin.Instance.Log.LogInfo("[OnGameStart] Upewniam się, że stan Draftu jest czysty...");
+                DraftManager.ResetState();
+                DraftRoleOverridePatch.ResetPatchState();
             }
         }
     }

@@ -35,10 +35,31 @@ namespace TownOfUsDraft
             "Phantom", "PhantomRole",  // Vanilla transformacja
         };
         
-        // Cache dla MiscUtils.GetAssignData i mapy ról
-        private static System.Reflection.MethodInfo _getAssignDataMethod = null;
+        // Cache dla mapy ról
         private static bool _roleCountCacheInitialized = false;
         private static Dictionary<string, int> _roleCountCache = new Dictionary<string, int>();
+
+        // Zmienne stanu Draftu
+        public static bool IsDraftRunning = false;
+        private static List<byte> _draftOrder = new List<byte>();
+        private static Dictionary<byte, List<string>> _draftOptions = new Dictionary<byte, List<string>>();
+
+        public static void ResetState()
+        {
+            DraftPlugin.Instance.Log.LogError("[DraftManager] ResetState() - Czyszczenie stanu Draftu...");
+            
+            TurnQueue.Clear();
+            HostDraftAssignments.Clear();
+            _globalUsedRoles.Clear();
+            PendingRoles.Clear();
+            
+            _rolesApplied = false;
+            IsDraftRunning = false;
+            _draftOrder.Clear();
+            _draftOptions.Clear();
+            
+            DraftPlugin.Instance.Log.LogError("[DraftManager] Stan wyczyszczony.");
+        }
 
         public static void StartDraft()
         {
@@ -150,7 +171,7 @@ namespace TownOfUsDraft
                 // NAPRAWIONE: Dodajemy do _globalUsedRoles DOPIERO gdy gracz wybierze
                 // (przeniesione do OnPlayerSelectedRole)
                 
-                while (options.Count < 3) options.Add("Sheriff");
+                while (options.Count < 3) options.Add("NO_OPTION");
 
                 DraftHud.TurnWatchdogTimer = 0f; 
                 DraftHud.CurrentTurnPlayerId = nextPlayerId;
@@ -177,12 +198,23 @@ namespace TownOfUsDraft
             byte pid = DraftHud.CurrentTurnPlayerId;
             DraftPlugin.Instance.Log.LogWarning($"[Draft Watchdog] Timeout dla gracza {pid}. Auto-pick.");
 
-            string autoRole = "Sheriff"; 
+            string autoRole = "CrewmateRole"; // Fallback role
             if (DraftHud.CurrentTurnOptions != null && DraftHud.CurrentTurnOptions.Count > 0)
             {
-                var valid = DraftHud.CurrentTurnOptions.Where(r => r != "Crewmate" && r != "Sheriff").ToList();
-                if (valid.Count > 0) autoRole = valid[0];
-                else autoRole = DraftHud.CurrentTurnOptions[0];
+                // Filtrujemy Crewmate i NO_OPTION
+                var valid = DraftHud.CurrentTurnOptions.Where(r => r != "Crewmate" && r != "NO_OPTION").ToList();
+                
+                if (valid.Count > 0) 
+                {
+                    // Wybierz pierwszą valid rolę
+                    autoRole = valid[0];
+                }
+                else 
+                {
+                    // Jeśli nie ma valid ról, weź cokolwiek co nie jest NO_OPTION
+                    var any = DraftHud.CurrentTurnOptions.FirstOrDefault(r => r != "NO_OPTION");
+                    if (any != null) autoRole = any;
+                }
             }
             OnPlayerSelectedRole(autoRole, pid);
         }
@@ -1011,9 +1043,9 @@ namespace TownOfUsDraft
         private static void SendStartTurnRpc(byte playerId, string cat, List<string> opts) {
             MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId, (byte)251, SendOption.Reliable, -1);
             writer.Write(playerId); writer.Write(cat); 
-            writer.Write(opts.Count > 0 ? opts[0] : "Sheriff"); 
-            writer.Write(opts.Count > 1 ? opts[1] : "Sheriff"); 
-            writer.Write(opts.Count > 2 ? opts[2] : "Sheriff");
+            writer.Write(opts.Count > 0 ? opts[0] : "NO_OPTION"); 
+            writer.Write(opts.Count > 1 ? opts[1] : "NO_OPTION"); 
+            writer.Write(opts.Count > 2 ? opts[2] : "NO_OPTION");
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
         

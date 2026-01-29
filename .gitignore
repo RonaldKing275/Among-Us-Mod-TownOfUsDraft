@@ -183,3 +183,17 @@ Assets/AssetStoreTools*
 *.suo
 *.cache
 *.csproj.user
+
+.fake
+
+# ========================
+# SPECJALNE WYJĄTKI
+# ========================
+
+# Ignoruj cały folder z kodem referencyjnym (TOU/MiraAPI)
+_external_reference/
+
+# Ignoruj pliki tymczasowe Cursora, ale zachowaj reguły
+.cursor/
+!.cursorrules
+!.cursorignore

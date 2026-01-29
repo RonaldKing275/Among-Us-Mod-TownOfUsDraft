@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <Reference Include="libs/*.dll" />
+    <Compile Remove="_external_reference\**" />
+    <None Include="_external_reference\**" />
   </ItemGroup>
 
 </Project>

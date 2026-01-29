@@ -51,6 +51,11 @@ namespace TownOfUsDraft.Patches
             return true;
         }
         
+        public static void ResetPatchState()
+        {
+             _selectRolesBlocked = false;
+        }
+
         [HarmonyPostfix]
         [HarmonyPriority(Priority.Last)]
         public static void Postfix()
@@ -67,151 +72,70 @@ namespace TownOfUsDraft.Patches
             SetTouReplaceRoleManagerFlag(false);
             DraftPlugin.Instance.Log.LogError("    → TOU odblokowane - MiraAPI patch będzie działać");
             
-            // Aplikuj role z PendingRoles
-            int count = 0;
-            foreach (var kvp in DraftManager.PendingRoles)
+            // Aplikuj role z PendingRoles - TYLKO NA HOŚCIE
+            if (AmongUsClient.Instance.AmHost)
             {
-                var player = DraftManager.GetPlayerById(kvp.Key);
-                if (player != null && !player.Data.Disconnected)
+                int count = 0;
+                foreach (var kvp in DraftManager.PendingRoles)
                 {
-                    var roleBehaviour = kvp.Value;
-                    var rolePrefabName = (roleBehaviour as UnityEngine.Object)?.name ?? "Unknown";
-                    
-                    DraftPlugin.Instance.Log.LogError($"[POSTFIX] → Gracz: {player.Data.PlayerName} (ID:{player.PlayerId})");
-                    DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ Wybrana rola (prefab): {rolePrefabName}");
-                    DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ RoleBehaviour Type: {roleBehaviour.GetType().FullName}");
-                    DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ RoleBehaviour.Role (RoleTypes): {(int)roleBehaviour.Role} = {roleBehaviour.Role}");
-                    
-                    if (AmongUsClient.Instance.AmHost)
+                    var player = DraftManager.GetPlayerById(kvp.Key);
+                    if (player != null && !player.Data.Disconnected)
                     {
-                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ HOST: Ustawiam lokalnie + wysyłam RPC_SET_DRAFT_ROLE");
+                        var roleBehaviour = kvp.Value;
                         
-                        // Host: Ustaw lokalnie używając DraftNetworkPatch.SetExactRoleLocal
-                        DraftNetworkPatch.CallSetExactRoleLocal(player, roleBehaviour);
+                        DraftPlugin.Instance.Log.LogError($"[POSTFIX] → Gracz: {player.Data.PlayerName} (ID:{player.PlayerId})");
+                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]   ├─ Ustawiam rolę (RpcSetRole): {roleBehaviour.Role}");
+
+                        // Używamy natywnego RpcSetRole, który TOU/MiraAPI patchuje
+                        player.RpcSetRole(roleBehaviour.Role);
                         
-                        // Host: Wyślij custom RPC do klientów
-                        SendSetDraftRoleRpc(player.PlayerId, rolePrefabName);
-                        
-                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]   └─ ✓ Custom RPC wysłany");
+                        count++;
                     }
-                    else
-                    {
-                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]   └─ KLIENT: Czekam na RPC_SET_DRAFT_ROLE od hosta");
-                    }
-                    
-                    // Sprawdź przypisaną rolę
-                    if (player.Data != null && player.Data.Role != null)
-                    {
-                        var assignedRoleName = (player.Data.Role as UnityEngine.Object)?.name ?? player.Data.Role.GetType().Name;
-                        var assignedRoleType = player.Data.Role.Role;
-                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]      ✓ player.Data.Role: {assignedRoleName} (RoleTypes:{(int)assignedRoleType})");
-                    }
-                    else
-                    {
-                        DraftPlugin.Instance.Log.LogError($"[POSTFIX]      ✗ player.Data.Role jest NULL.");
-                    }
-                    
-                    count++;
                 }
-            }
-            
-            DraftPlugin.Instance.Log.LogError($"    ✓ Przetworzono {count}/{DraftManager.PendingRoles.Count} ról");
-            
-            // KLUCZOWE: Wywołaj AssignTargets() PO aplikacji ról z draftu!
-            // TOU wywołało AssignTargets() w swoim Postfix, ale dla STARYCH ról.
-            // Teraz musimy wywołać ponownie dla NOWYCH ról - ZARÓWNO na hoście JAK I na klientach!
-            DraftPlugin.Instance.Log.LogError("    → Wywołuję TOU's AssignTargets() dla nowych ról...");
-            try
-            {
-                var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
-                    
-                if (touAssembly != null)
+                
+                DraftPlugin.Instance.Log.LogError($"    ✓ Przetworzono {count}/{DraftManager.PendingRoles.Count} ról");
+                
+                // KLUCZOWE: Wywołaj AssignTargets() PO aplikacji ról z draftu!
+                // Wywołujemy tylko na hoście, TOU powinno zsynchronizować cele
+                DraftPlugin.Instance.Log.LogError("    → Wywołuję TOU's AssignTargets() dla nowych ról...");
+                try
                 {
-                    var patchType = touAssembly.GetTypes()
-                        .FirstOrDefault(t => t.Name == "TouRoleManagerPatches");
+                    var touAssembly = System.AppDomain.CurrentDomain.GetAssemblies()
+                        .FirstOrDefault(a => a.GetName().Name == "TownOfUsMira");
                         
-                    if (patchType != null)
+                    if (touAssembly != null)
                     {
-                        var assignTargetsMethod = patchType.GetMethod("AssignTargets", 
-                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                        
-                        if (assignTargetsMethod != null)
-                        {
-                            // Wywołaj lokalnie na hoście
-                            assignTargetsMethod.Invoke(null, null);
-                            DraftPlugin.Instance.Log.LogError("    ✓ AssignTargets() wywołane na hoście!");
+                        var patchType = touAssembly.GetTypes()
+                            .FirstOrDefault(t => t.Name == "TouRoleManagerPatches");
                             
-                            // Wyślij RPC do wszystkich klientów
-                            if (AmongUsClient.Instance.AmHost)
+                        if (patchType != null)
+                        {
+                            var assignTargetsMethod = patchType.GetMethod("AssignTargets", 
+                                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                            
+                            if (assignTargetsMethod != null)
                             {
-                                SendAssignTargetsRpc();
-                                DraftPlugin.Instance.Log.LogError("    ✓ Wysłano RPC_ASSIGN_TARGETS do klientów!");
+                                // Wywołaj lokalnie na hoście
+                                assignTargetsMethod.Invoke(null, null);
+                                DraftPlugin.Instance.Log.LogError("    ✓ AssignTargets() wywołane na hoście!");
+                            }
+                            else
+                            {
+                                DraftPlugin.Instance.Log.LogWarning("    ⚠ Nie znaleziono metody AssignTargets()");
                             }
                         }
-                        else
-                        {
-                            DraftPlugin.Instance.Log.LogWarning("    ⚠ Nie znaleziono metody AssignTargets()");
-                        }
                     }
                 }
-            }
-            catch (System.Exception ex)
-            {
-                DraftPlugin.Instance.Log.LogError($"    ✗ Błąd podczas wywołania AssignTargets(): {ex.Message}");
+                catch (System.Exception ex)
+                {
+                    DraftPlugin.Instance.Log.LogError($"    ✗ Błąd podczas wywołania AssignTargets(): {ex.Message}");
+                }
             }
             
             // Wyczyść PendingRoles i ustaw flagę
             DraftManager._rolesApplied = true;
             DraftManager.PendingRoles.Clear();
             _selectRolesBlocked = false;
-        }
-        
-        // Wysyła RPC informujący wszystkich że należy wywołać AssignTargets()
-        private static void SendAssignTargetsRpc()
-        {
-            if (!AmongUsClient.Instance.AmHost)
-            {
-                DraftPlugin.Instance.Log.LogWarning("[SendAssignTargetsRpc] Tylko host może wysyłać ten RPC!");
-                return;
-            }
-            
-            var writer = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId,
-                DraftNetworkPatch.RPC_ASSIGN_TARGETS,
-                Hazel.SendOption.Reliable,
-                -1   // Wyślij do wszystkich
-            );
-            
-            // Brak danych do wysłania - to tylko sygnał
-            
-            AmongUsClient.Instance.FinishRpcImmediately(writer);
-            
-            DraftPlugin.Instance.Log.LogError($"[SendAssignTargetsRpc] ✓ Wysłano RPC_ASSIGN_TARGETS");
-        }
-        
-        // Wysyła custom RPC z nazwą prefab roli do wszystkich klientów
-        private static void SendSetDraftRoleRpc(byte playerId, string rolePrefabName)
-        {
-            if (!AmongUsClient.Instance.AmHost)
-            {
-                DraftPlugin.Instance.Log.LogWarning("[SendSetDraftRoleRpc] Tylko host może wysyłać ten RPC!");
-                return;
-            }
-            
-            var writer = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId,
-                250, // RPC_SET_DRAFT_ROLE
-                Hazel.SendOption.Reliable,
-                -1   // Wyślij do wszystkich
-            );
-            
-            writer.Write(playerId);
-            writer.Write(rolePrefabName);
-            
-            AmongUsClient.Instance.FinishRpcImmediately(writer);
-            
-            DraftPlugin.Instance.Log.LogError($"[SendSetDraftRoleRpc] ✓ Wysłano RPC: PlayerId={playerId}, Role={rolePrefabName}");
         }
         
         // Ustawia TouRoleManagerPatches.ReplaceRoleManager przez refleksję
