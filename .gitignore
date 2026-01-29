@@ -197,3 +197,9 @@ _external_reference/
 .cursor/
 !.cursorrules
 !.cursorignore
+
+# Pliki lokalne (nie wysyłać na GitHub)
+SUGGESTIONS.md
+REVIEW_SUMMARY.md
+*.lnk
+*.bat
