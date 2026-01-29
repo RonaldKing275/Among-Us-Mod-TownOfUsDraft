@@ -195,8 +195,8 @@ _external_reference/
 
 # Ignoruj pliki tymczasowe Cursora, ale zachowaj reguły
 .cursor/
-!.cursorrules
-!.cursorignore
+.cursorrules
+.cursorignore
 
 # Pliki lokalne (nie wysyłać na GitHub)
 SUGGESTIONS.md
