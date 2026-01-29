@@ -201,5 +201,6 @@ _external_reference/
 # Pliki lokalne (nie wysyłać na GitHub)
 SUGGESTIONS.md
 REVIEW_SUMMARY.md
+BUILD.md
 *.lnk
 *.bat
