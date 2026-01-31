@@ -9,8 +9,8 @@ obj/
 *.pdb
 *.exe
 
-# Wyjątki - libs są potrzebne
-!libs/*.dll
+# Ignoruj biblioteki zewnętrzne (prawa autorskie)
+libs/
 
 # IDE
 .vs/
