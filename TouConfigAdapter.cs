@@ -3,6 +3,7 @@ using System.Reflection;
 using UnityEngine;
 using MiraAPI.GameOptions;
 using BepInEx.Configuration;
+// using TownOfUsDraft.Options; - Usunięto, bo DraftOptions jest teraz w głównym namespace
 
 namespace TownOfUsDraft
 {
@@ -18,16 +19,14 @@ namespace TownOfUsDraft
         public static ConfigEntry<int> NeutralEvil;
         public static ConfigEntry<int> NeutralBenign;
         public static ConfigEntry<int> RandomNeutral;
-        public static ConfigEntry<bool> EnableDraftMode;
-        public static ConfigEntry<float> DraftTimeout;
+
+        // Przekierowanie do MiraAPI Options
+        public static bool EnableDraftMode => OptionGroupSingleton<DraftOptions>.Instance.EnableDraftMode.Value;
+        public static float DraftTimeout => OptionGroupSingleton<DraftOptions>.Instance.DraftTimeout.Value;
 
         public static void InitializeConfig(ConfigFile config)
         {
-            EnableDraftMode = config.Bind("General", "EnableDraftMode", true, 
-                "Włącz/Wyłącz Draft Mode dla Town of Us");
-
-            DraftTimeout = config.Bind("General", "DraftTimeout", 20f, 
-                "Maksymalny czas (w sekundach) na wybór roli podczas draftu");
+            // Opcje DraftMode i DraftTimeout są teraz w GameSettings (MiraAPI)
 
             CrewSupport = config.Bind("Roles", "CrewSupport", 2, 
                 "Liczba ról Crew Support w drafcie");

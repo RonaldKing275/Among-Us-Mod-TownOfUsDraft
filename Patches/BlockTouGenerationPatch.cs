@@ -16,9 +16,9 @@ namespace TownOfUsDraft.Patches
         [HarmonyBefore("auavengers.tou.mira")] // KRYTYCZNE: Wykonaj się PRZED TOU-Mira!
         public static bool Prefix()
         {
-            DraftPlugin.Instance.Log.LogInfo($"[Prefix] EnableDraftMode: {TouConfigAdapter.EnableDraftMode.Value}, PendingRoles.Count: {DraftManager.PendingRoles.Count}, _selectRolesBlocked: {_selectRolesBlocked}");
+            DraftPlugin.Instance.Log.LogInfo($"[Prefix] EnableDraftMode: {TouConfigAdapter.EnableDraftMode}, PendingRoles.Count: {DraftManager.PendingRoles.Count}, _selectRolesBlocked: {_selectRolesBlocked}");
             
-            if (!TouConfigAdapter.EnableDraftMode.Value)
+            if (!TouConfigAdapter.EnableDraftMode)
             {
                 // Draft wyłączony - pozwól TOU działać normalnie
                 SetTouReplaceRoleManagerFlag(false);
@@ -60,7 +60,7 @@ namespace TownOfUsDraft.Patches
         [HarmonyPriority(Priority.Last)]
         public static void Postfix()
         {
-            if (!TouConfigAdapter.EnableDraftMode.Value) return;
+            if (!TouConfigAdapter.EnableDraftMode) return;
             if (DraftManager.PendingRoles.Count == 0) return;
             if (DraftManager._rolesApplied) return;
             

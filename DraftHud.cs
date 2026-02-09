@@ -26,7 +26,7 @@ namespace TownOfUsDraft
         public static List<string> CurrentTurnOptions = new List<string>(); 
         
         // Timeout z configa
-        private float MaxTurnTime => TouConfigAdapter.DraftTimeout?.Value ?? 20.0f; 
+        private float MaxTurnTime => TouConfigAdapter.DraftTimeout; 
 
         private bool _wasPaused = false;
 
